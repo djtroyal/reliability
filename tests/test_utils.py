@@ -1,0 +1,91 @@
+"""Tests for reliability.Utils."""
+
+import numpy as np
+import pytest
+from reliability.Utils import (
+    median_rank_approximation,
+    rank_adjustment,
+    AICc,
+    BIC,
+    anderson_darling,
+    xy_transform,
+)
+
+
+def test_median_rank_basic():
+    ranks = np.array([1, 2, 3])
+    mr = median_rank_approximation(ranks, 3)
+    assert mr.shape == (3,)
+    assert np.all(mr > 0) and np.all(mr < 1)
+    assert mr[0] < mr[1] < mr[2]
+
+
+def test_median_rank_bernard():
+    # Bernard's approximation: (j - 0.3) / (n + 0.4)
+    ranks = np.array([1, 2, 3, 4, 5])
+    n = 5
+    expected = (ranks - 0.3) / (n + 0.4)
+    result = median_rank_approximation(ranks, n)
+    np.testing.assert_allclose(result, expected)
+
+
+def test_rank_adjustment_no_censored():
+    failures = np.array([10.0, 20.0, 30.0])
+    ranks, n = rank_adjustment(failures, None)
+    assert n == 3
+    np.testing.assert_array_equal(ranks, [1, 2, 3])
+
+
+def test_rank_adjustment_with_censored():
+    failures = np.array([10.0, 30.0])
+    censored = np.array([20.0])
+    ranks, n = rank_adjustment(failures, censored)
+    assert n == 3
+    assert len(ranks) == 2
+
+
+def test_aicc_increases_with_params():
+    loglik = -100.0
+    n = 50
+    aic1 = AICc(loglik, 1, n)
+    aic2 = AICc(loglik, 2, n)
+    assert aic2 > aic1
+
+
+def test_bic_increases_with_params():
+    loglik = -100.0
+    n = 50
+    bic1 = BIC(loglik, 1, n)
+    bic2 = BIC(loglik, 2, n)
+    assert bic2 > bic1
+
+
+def test_anderson_darling_returns_float():
+    from scipy.stats import weibull_min
+    dist = weibull_min(c=2.0, scale=100.0)
+    failures = np.sort(np.array([50.0, 80.0, 100.0, 120.0, 150.0]))
+    ad = anderson_darling(failures, dist.cdf)
+    assert isinstance(ad, float)
+    assert ad >= 0
+
+
+def test_xy_transform_weibull():
+    x_t, y_t, x_lbl, y_lbl = xy_transform('Weibull_2P')
+    x = np.array([100.0, 200.0])
+    y = np.array([0.3, 0.7])
+    assert x_t(x).shape == (2,)
+    assert y_t(y).shape == (2,)
+
+
+def test_xy_transform_normal():
+    x_t, y_t, x_lbl, y_lbl = xy_transform('Normal_2P')
+    x = np.array([10.0, 20.0])
+    y = np.array([0.2, 0.8])
+    assert x_t(x).shape == (2,)
+
+
+def test_xy_transform_unknown_returns_identity():
+    # Unknown distributions fall through to identity transforms
+    x_t, y_t, x_lbl, y_lbl = xy_transform('Unknown_dist')
+    x = np.array([1.0, 2.0])
+    np.testing.assert_array_equal(x_t(x), x)

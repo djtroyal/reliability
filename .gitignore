@@ -13,3 +13,5 @@ htmlcov/
 .venv/
 venv/
 env/
+node_modules/
+gui/frontend/dist/

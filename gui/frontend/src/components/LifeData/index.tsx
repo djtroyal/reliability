@@ -39,6 +39,7 @@ export default function LifeData() {
     Array.from({ length: 5 }, () => makeKey()))
   const [method, setMethod] = useState<'MLE' | 'LS'>('MLE')
   const [ci, setCi] = useState(0.95)
+  const [ciText, setCiText] = useState('0.95')
   const [selectedDists, setSelectedDists] = useState<string[]>(ALL_DISTS)
   const [analysisMode, setAnalysisMode] = useState<'parametric' | 'nonparametric'>('parametric')
   const [npMethod, setNpMethod] = useState<'KM' | 'NA'>('KM')
@@ -198,13 +199,14 @@ export default function LifeData() {
   }
 
   const ciPct = Math.round((fitResult?.CI ?? ci) * 100)
+  const activeDist = selectedDist ?? fitResult?.best_distribution ?? ''
+  const activePlot = fitResult?.plots?.[activeDist]
 
   // Build probability plot
   const probPlotData = (() => {
-    if (!fitResult?.plots?.probability) return []
-    const p = fitResult.plots.probability
+    if (!activePlot?.probability) return []
+    const p = activePlot.probability
     const traces: Record<string, unknown>[] = []
-    // Confidence band (drawn first so data/fit render on top)
     if (p.line_upper && p.line_lower) {
       traces.push({ x: p.line_x, y: p.line_upper, mode: 'lines', line: { width: 0 },
         showlegend: false, hoverinfo: 'skip' })
@@ -218,9 +220,9 @@ export default function LifeData() {
     return traces
   })()
 
-  const probLayout = fitResult?.plots?.probability ? {
-    xaxis: { title: fitResult.plots.probability.x_label, gridcolor: '#e5e7eb' },
-    yaxis: { title: fitResult.plots.probability.y_label, gridcolor: '#e5e7eb' },
+  const probLayout = activePlot?.probability ? {
+    xaxis: { title: activePlot.probability.x_label, gridcolor: '#e5e7eb' },
+    yaxis: { title: activePlot.probability.y_label, gridcolor: '#e5e7eb' },
     margin: { t: 30, r: 20, b: 50, l: 60 },
     paper_bgcolor: 'white', plot_bgcolor: 'white',
     showlegend: true, legend: { x: 0.02, y: 0.98 },
@@ -229,11 +231,10 @@ export default function LifeData() {
   // Build curve plot
   const curveKey = curveTab.toLowerCase() as 'pdf' | 'cdf' | 'sf' | 'hf'
   const curvePlotData = (() => {
-    if (!fitResult?.plots?.curves) return []
-    const c = fitResult.plots.curves
+    if (!activePlot?.curves) return []
+    const c = activePlot.curves
     const dyn = c as unknown as Record<string, number[] | undefined>
     const traces: Record<string, unknown>[] = []
-    // Confidence band for SF/CDF (drawn first so the curve renders on top)
     const lower = dyn[`${curveKey}_lower`]
     const upper = dyn[`${curveKey}_upper`]
     if ((curveKey === 'sf' || curveKey === 'cdf') && lower && upper) {
@@ -428,13 +429,27 @@ export default function LifeData() {
 
             <div>
               <label className="block text-xs font-medium text-gray-700 mb-1">Confidence level</label>
-              <div className="flex gap-2">
-                {([0.90, 0.95, 0.99] as const).map(c => (
-                  <button key={c} onClick={() => setCi(c)}
-                    className={`flex-1 py-1 text-xs rounded border transition-colors ${
-                      ci === c ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-300 text-gray-600'
-                    }`}>{Math.round(c * 100)}%</button>
-                ))}
+              <div className="flex gap-2 items-center">
+                <input
+                  type="text"
+                  value={ciText}
+                  onChange={e => setCiText(e.target.value)}
+                  onBlur={() => {
+                    const v = parseFloat(ciText)
+                    if (!isNaN(v) && v > 0 && v < 1) setCi(v)
+                    else setCiText(String(ci))
+                  }}
+                  onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                  className="w-16 text-xs border border-gray-300 rounded px-2 py-1 font-mono focus:outline-none focus:ring-1 focus:ring-blue-400"
+                />
+                <div className="flex gap-1">
+                  {([0.90, 0.95, 0.99] as const).map(c => (
+                    <button key={c} onClick={() => { setCi(c); setCiText(String(c)) }}
+                      className={`px-2 py-1 text-[10px] rounded border transition-colors ${
+                        ci === c ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-300 text-gray-500'
+                      }`}>{Math.round(c * 100)}%</button>
+                  ))}
+                </div>
               </div>
             </div>
 
@@ -568,7 +583,7 @@ export default function LifeData() {
                 {plotTab === 'probability' && probPlotData.length > 0 && (
                   <Plot
                     data={probPlotData as Plotly.Data[]}
-                    layout={{ ...probLayout, title: `${fitResult.best_distribution} Probability Plot` } as any}
+                    layout={{ ...probLayout, title: `${activeDist} Probability Plot` } as any}
                     config={{ responsive: true, displayModeBar: true }}
                     style={{ width: '100%', height: '100%' }}
                     useResizeHandler
@@ -586,7 +601,7 @@ export default function LifeData() {
                     </div>
                     <Plot
                       data={curvePlotData as Plotly.Data[]}
-                      layout={{ ...curveLayout, title: `${fitResult.best_distribution} — ${curveTab}` } as any}
+                      layout={{ ...curveLayout, title: `${activeDist} — ${curveTab}` } as any}
                       config={{ responsive: true }}
                       style={{ width: '100%', flex: 1 }}
                       useResizeHandler

@@ -22,33 +22,35 @@ export interface FitResult {
   params?: Record<string, number | null>
 }
 
+export interface DistPlotData {
+  probability?: {
+    scatter_x: number[]
+    scatter_y: number[]
+    line_x: number[]
+    line_y: number[]
+    line_lower?: number[]
+    line_upper?: number[]
+    x_label: string
+    y_label: string
+  }
+  curves?: {
+    x: number[]
+    pdf: number[]
+    cdf: number[]
+    sf: number[]
+    hf: number[]
+    sf_lower?: number[]
+    sf_upper?: number[]
+    cdf_lower?: number[]
+    cdf_upper?: number[]
+  }
+}
+
 export interface FitResponse {
   results: FitResult[]
   best_distribution: string
   CI: number
-  plots: {
-    probability?: {
-      scatter_x: number[]
-      scatter_y: number[]
-      line_x: number[]
-      line_y: number[]
-      line_lower?: number[]
-      line_upper?: number[]
-      x_label: string
-      y_label: string
-    }
-    curves?: {
-      x: number[]
-      pdf: number[]
-      cdf: number[]
-      sf: number[]
-      hf: number[]
-      sf_lower?: number[]
-      sf_upper?: number[]
-      cdf_lower?: number[]
-      cdf_upper?: number[]
-    }
-  }
+  plots: Record<string, DistPlotData>
   available_distributions: string[]
 }
 

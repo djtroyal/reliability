@@ -167,17 +167,19 @@ def fit_distributions(req: LifeDataFitRequest):
             entry["params"] = _dist_params(fe.fitted[dist_name], dist_name)
         results.append(entry)
 
-    # Plot data for best distribution
+    # Plot data for every fitted distribution (enables instant switching)
     best_name = fe.best_distribution_name
-    best_fit = fe.fitted.get(best_name)
-    plots = {}
-    if best_fit and best_fit.distribution:
-        try:
-            plots["probability"] = _probability_plot_data(
-                best_fit, best_name, failures, req.right_censored)
-            plots["curves"] = _distribution_curves(best_fit, failures)
-        except Exception:
-            pass
+    plots: dict = {}
+    for dist_name, fit in fe.fitted.items():
+        if fit and fit.distribution:
+            try:
+                plots[dist_name] = {
+                    "probability": _probability_plot_data(
+                        fit, dist_name, failures, req.right_censored),
+                    "curves": _distribution_curves(fit, failures),
+                }
+            except Exception:
+                pass
 
     return {
         "results": results,

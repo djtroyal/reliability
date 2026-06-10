@@ -109,6 +109,37 @@ export const fitALT = (req: ALTFitRequest) =>
 export const getALTModels = () =>
   api.get<{ models: string[] }>('/alt/models').then(r => r.data)
 
+// --- Reliability Demonstration Test (sample size) ---
+
+export interface SampleSizeRequest {
+  method: 'nonparametric' | 'parametric_samples' | 'parametric_time'
+  failures: number
+  R: number
+  CI: number
+  mission_time?: number
+  beta?: number
+  test_time?: number
+  n?: number
+  options_table?: boolean
+  oc_curve?: boolean
+}
+
+export interface SampleSizeResponse {
+  method: string
+  failures: number
+  R: number
+  CI: number
+  n: number | null
+  test_time: number | null
+  eta: number | null
+  R_test: number | null
+  options_table?: { f: number; n?: number | null; test_time?: number | null }[]
+  oc_curve?: { R: number[]; P_accept: number[]; R_demonstrated: number; alpha: number }
+}
+
+export const computeSampleSize = (req: SampleSizeRequest) =>
+  api.post<SampleSizeResponse>('/alt/sample-size', req).then(r => r.data)
+
 // --- System Reliability ---
 
 export interface RBDNode {

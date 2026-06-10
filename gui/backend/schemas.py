@@ -33,6 +33,20 @@ class ALTFitRequest(BaseModel):
     sort_by: str = "AICc"
 
 
+class SampleSizeRequest(BaseModel):
+    # 'nonparametric' (Method 1) | 'parametric_samples' (2A) | 'parametric_time' (2B)
+    method: str = "nonparametric"
+    failures: int = 0
+    R: float = 0.80                       # reliability requirement (R_rqmt for parametric)
+    CI: float = 0.90
+    mission_time: Optional[float] = None  # parametric methods
+    beta: Optional[float] = None          # Weibull shape, parametric methods
+    test_time: Optional[float] = None     # Method 2A
+    n: Optional[int] = None               # Method 2B
+    options_table: bool = False
+    oc_curve: bool = False
+
+
 # --- System Reliability (RBD) ---
 
 class RBDNode(BaseModel):

@@ -23,6 +23,7 @@ export const MODULE_LABELS: Record<string, string> = {
   system: 'RBD',
   faultTree: 'Fault Tree Analysis',
   prediction: 'Failure Rate Prediction',
+  pof: 'Physics of Failure',
   library: 'Component/Event Library',
 }
 

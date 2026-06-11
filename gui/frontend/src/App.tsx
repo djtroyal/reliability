@@ -4,9 +4,10 @@ import ALT from './components/ALT'
 import SystemReliability from './components/SystemReliability'
 import FaultTreePage from './components/FaultTree'
 import Prediction from './components/Prediction'
+import PhysicsOfFailure from './components/PhysicsOfFailure'
 import ProjectBar from './components/shared/ProjectBar'
 
-type Tab = 'life-data' | 'alt' | 'system' | 'fault-tree' | 'prediction'
+type Tab = 'life-data' | 'alt' | 'system' | 'fault-tree' | 'prediction' | 'pof'
 
 const tabs: { id: Tab; label: string; moduleKey: string }[] = [
   { id: 'life-data', label: 'Life Data Analysis', moduleKey: 'lifeData' },
@@ -14,6 +15,7 @@ const tabs: { id: Tab; label: string; moduleKey: string }[] = [
   { id: 'system', label: 'RBD', moduleKey: 'system' },
   { id: 'fault-tree', label: 'Fault Tree Analysis', moduleKey: 'faultTree' },
   { id: 'prediction', label: 'Failure Rate Prediction', moduleKey: 'prediction' },
+  { id: 'pof', label: 'Physics of Failure', moduleKey: 'pof' },
 ]
 
 export default function App() {
@@ -54,6 +56,7 @@ export default function App() {
         {active === 'system' && <SystemReliability />}
         {active === 'fault-tree' && <FaultTreePage />}
         {active === 'prediction' && <Prediction />}
+        {active === 'pof' && <PhysicsOfFailure />}
       </main>
 
       <footer className="bg-white border-t border-gray-100 px-6 py-1.5 text-[10px] text-gray-400 flex-shrink-0">

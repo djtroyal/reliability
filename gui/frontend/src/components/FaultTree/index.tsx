@@ -85,11 +85,80 @@ function VoteGateNode({ data, selected }: NodeProps) {
   )
 }
 
+function PANDGateNode({ data, selected }: NodeProps) {
+  return (
+    <div className={`relative ${selected ? 'drop-shadow-lg' : ''}`} style={{ width: 80, height: 80 }}>
+      <Handle type="target" position={Position.Top} className="!bg-teal-400" style={{ top: -4 }} />
+      <svg viewBox="0 0 80 80" className="w-full h-full">
+        <path d="M 10 50 L 10 20 Q 10 5, 40 5 Q 70 5, 70 20 L 70 50 Z"
+              fill={selected ? '#0f766e' : '#0d9488'} stroke="#134e4a" strokeWidth="2" />
+        {/* Priority indicator triangle */}
+        <polygon points="40,52 34,62 46,62" fill="rgba(255,255,255,0.6)" />
+        <text x="40" y="30" textAnchor="middle" fill="white" fontSize="10" fontWeight="bold">PAND</text>
+        <text x="40" y="45" textAnchor="middle" fill="rgba(255,255,255,0.8)" fontSize="9">{String(data.label || '')}</text>
+      </svg>
+      <Handle type="source" position={Position.Bottom} className="!bg-teal-400" style={{ bottom: -4 }} />
+    </div>
+  )
+}
+
+function XORGateNode({ data, selected }: NodeProps) {
+  return (
+    <div className={`relative ${selected ? 'drop-shadow-lg' : ''}`} style={{ width: 80, height: 80 }}>
+      <Handle type="target" position={Position.Top} className="!bg-rose-400" style={{ top: -4 }} />
+      <svg viewBox="0 0 80 80" className="w-full h-full">
+        <path d="M 10 55 Q 15 30, 40 5 Q 65 30, 70 55 Q 40 45, 10 55 Z"
+              fill={selected ? '#be123c' : '#e11d48'} stroke="#9f1239" strokeWidth="2" />
+        <text x="40" y="35" textAnchor="middle" fill="white" fontSize="12" fontWeight="bold">XOR</text>
+        <text x="40" y="48" textAnchor="middle" fill="rgba(255,255,255,0.8)" fontSize="9">{String(data.label || '')}</text>
+      </svg>
+      <Handle type="source" position={Position.Bottom} className="!bg-rose-400" style={{ bottom: -4 }} />
+    </div>
+  )
+}
+
+function NOTGateNode({ data, selected }: NodeProps) {
+  return (
+    <div className={`relative ${selected ? 'drop-shadow-lg' : ''}`} style={{ width: 80, height: 80 }}>
+      <Handle type="target" position={Position.Top} className="!bg-slate-400" style={{ top: -4 }} />
+      <svg viewBox="0 0 80 80" className="w-full h-full">
+        {/* Inverter triangle pointing down */}
+        <polygon points="40,5 10,60 70,60"
+                 fill={selected ? '#334155' : '#475569'} stroke="#1e293b" strokeWidth="2" />
+        {/* Small circle at the bottom for NOT symbol */}
+        <circle cx="40" cy="65" r="5" fill="none" stroke="#1e293b" strokeWidth="2" />
+        <text x="40" y="35" textAnchor="middle" fill="white" fontSize="11" fontWeight="bold">NOT</text>
+        <text x="40" y="50" textAnchor="middle" fill="rgba(255,255,255,0.8)" fontSize="9">{String(data.label || '')}</text>
+      </svg>
+      <Handle type="source" position={Position.Bottom} className="!bg-slate-400" style={{ bottom: -4 }} />
+    </div>
+  )
+}
+
+function TransferGateNode({ data, selected }: NodeProps) {
+  return (
+    <div className={`relative ${selected ? 'drop-shadow-lg' : ''}`} style={{ width: 80, height: 80 }}>
+      <Handle type="target" position={Position.Top} className="!bg-cyan-400" style={{ top: -4 }} />
+      <svg viewBox="0 0 80 80" className="w-full h-full">
+        {/* Triangle pointing right */}
+        <polygon points="10,10 70,40 10,70"
+                 fill={selected ? '#0e7490' : '#0891b2'} stroke="#155e75" strokeWidth="2" />
+        <text x="35" y="43" textAnchor="middle" fill="white" fontSize="11" fontWeight="bold">XFER</text>
+      </svg>
+      <Handle type="source" position={Position.Bottom} className="!bg-cyan-400" style={{ bottom: -4 }} />
+    </div>
+  )
+}
+
 const nodeTypes = {
   basic: BasicEventNode,
   and: AndGateNode,
   or: OrGateNode,
   vote: VoteGateNode,
+  pand: PANDGateNode,
+  xor: XORGateNode,
+  not: NOTGateNode,
+  transfer: TransferGateNode,
 }
 
 const importanceCols = [
@@ -149,7 +218,7 @@ export default function FaultTreePage() {
     [setEdges]
   )
 
-  const addNode = (type: 'basic' | 'and' | 'or' | 'vote') => {
+  const addNode = (type: 'basic' | 'and' | 'or' | 'vote' | 'pand' | 'xor' | 'not' | 'transfer') => {
     const maxId = nodes.reduce((m, n) => {
       const match = /^n(\d+)$/.exec(n.id)
       return match ? Math.max(m, parseInt(match[1], 10)) : m
@@ -282,6 +351,10 @@ export default function FaultTreePage() {
           { type: 'and', label: 'AND Gate', color: 'border-indigo-400 text-indigo-700' },
           { type: 'or', label: 'OR Gate', color: 'border-orange-400 text-orange-700' },
           { type: 'vote', label: 'VOTE Gate', color: 'border-purple-400 text-purple-700' },
+          { type: 'pand', label: 'PAND Gate', color: 'border-teal-400 text-teal-700' },
+          { type: 'xor', label: 'XOR Gate', color: 'border-rose-400 text-rose-700' },
+          { type: 'not', label: 'NOT Gate', color: 'border-slate-400 text-slate-700' },
+          { type: 'transfer', label: 'Transfer', color: 'border-cyan-400 text-cyan-700' },
         ] as const).map(({ type, label, color }) => (
           <button
             key={type}

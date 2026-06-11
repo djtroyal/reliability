@@ -1,6 +1,6 @@
-import { useState, useRef, Fragment } from 'react'
+import { useState, useRef } from 'react'
 import Plot from 'react-plotly.js'
-import { Play, Plus, Trash2, Upload, Download, X, Save, ChevronRight } from 'lucide-react'
+import { Play, Plus, Trash2, Upload, Download, X, ChevronRight, ChevronDown, FolderOpen, Folder } from 'lucide-react'
 import {
   predictFailureRate, PredictionPart, PredictionResponse,
 } from '../../api/client'
@@ -357,28 +357,77 @@ export default function Prediction() {
     reader.readAsText(file)
   }
 
-  // Grouped display order: each group renders as a section with a
-  // subtotal header; ungrouped parts follow as standalone rows.
-  const partDisplayOrder = (() => {
-    const sections: { key: string; group: string | null; indices: number[] }[] = []
-    const groupIdx = new Map<string, number>()
-    const ungrouped: number[] = []
+  // Hierarchical groups using " > " delimiter (e.g. "PSU > DC-DC > Filter")
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
+  const toggleGroup = (path: string) =>
+    setCollapsedGroups(prev => {
+      const next = new Set(prev)
+      if (next.has(path)) next.delete(path); else next.add(path)
+      return next
+    })
+
+  interface HierNode {
+    key: string
+    path: string
+    name: string
+    depth: number
+    indices: number[] // direct children parts
+    allIndices: number[] // all descendant parts
+    children: HierNode[]
+  }
+
+  const partHierarchy = (() => {
+    const root: HierNode = { key: 'root', path: '', name: '', depth: -1, indices: [], allIndices: [], children: [] }
+    const nodeMap = new Map<string, HierNode>([['', root]])
+
+    const getOrCreate = (path: string): HierNode => {
+      if (nodeMap.has(path)) return nodeMap.get(path)!
+      const parts2 = path.split(' > ')
+      const name = parts2[parts2.length - 1]
+      const parentPath = parts2.slice(0, -1).join(' > ')
+      const parent = getOrCreate(parentPath)
+      const node: HierNode = { key: `g:${path}`, path, name, depth: parts2.length - 1, indices: [], allIndices: [], children: [] }
+      parent.children.push(node)
+      nodeMap.set(path, node)
+      return node
+    }
+
     parts.forEach((p, i) => {
       const g = p.group?.trim()
       if (g) {
-        if (!groupIdx.has(g)) {
-          groupIdx.set(g, sections.length)
-          sections.push({ key: `g:${g}`, group: g, indices: [] })
-        }
-        sections[groupIdx.get(g)!].indices.push(i)
+        getOrCreate(g).indices.push(i)
       } else {
-        ungrouped.push(i)
+        root.indices.push(i)
       }
     })
-    if (ungrouped.length > 0) {
-      sections.push({ key: 'ungrouped', group: null, indices: ungrouped })
+
+    // Propagate allIndices upward
+    const propagate = (node: HierNode): number[] => {
+      const all = [...node.indices]
+      for (const child of node.children) all.push(...propagate(child))
+      node.allIndices = all
+      return all
     }
-    return sections
+    propagate(root)
+
+    return root
+  })()
+
+  // Flatten hierarchy into renderable rows
+  type DisplayRow =
+    | { type: 'group'; node: HierNode }
+    | { type: 'part'; index: number; depth: number }
+
+  const flatRows = (() => {
+    const rows: DisplayRow[] = []
+    const walk = (node: HierNode) => {
+      if (node.path) rows.push({ type: 'group', node })
+      if (node.path && collapsedGroups.has(node.path)) return
+      for (const child of node.children) walk(child)
+      for (const idx of node.indices) rows.push({ type: 'part', index: idx, depth: node.depth + 1 })
+    }
+    walk(partHierarchy)
+    return rows
   })()
 
   // --- plots ---
@@ -519,12 +568,13 @@ export default function Prediction() {
                 </label>
                 <input type="text" value={editorGroup} list="part-groups"
                   onChange={e => setEditorGroup(e.target.value)}
-                  placeholder="e.g. PSU"
+                  placeholder="e.g. PSU > DC-DC"
                   className="w-full text-xs border border-gray-300 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-400" />
                 <datalist id="part-groups">
                   {[...new Set(parts.map(p => p.group?.trim()).filter(Boolean))].map(g =>
                     <option key={g} value={g} />)}
                 </datalist>
+                <p className="text-[10px] text-gray-400 mt-0.5">Use " &gt; " for hierarchy (e.g. PSU &gt; Filter)</p>
               </div>
             </div>
             {CATEGORY_FIELDS[category].map(f => (
@@ -613,78 +663,90 @@ export default function Prediction() {
                   </tr>
                 </thead>
                 <tbody>
-                  {partDisplayOrder.map(section => (
-                    <Fragment key={section.key}>
-                      {section.group && (
-                        <tr className="border-t border-gray-200 bg-gray-50/70">
-                          <td colSpan={6} className="px-3 py-1.5 font-semibold text-gray-700">
-                            ⌸ {section.group}
-                            <span className="text-gray-400 font-normal"> ({section.indices.length} part{section.indices.length === 1 ? '' : 's'})</span>
+                  {flatRows.map((row, ri) => {
+                    if (row.type === 'group') {
+                      const { node } = row
+                      const isCollapsed = collapsedGroups.has(node.path)
+                      const groupLambda = result ? node.allIndices.reduce(
+                        (s, i) => s + (result.results[i]?.total_failure_rate ?? 0), 0) : null
+                      const groupContrib = result ? node.allIndices.reduce(
+                        (s, i) => s + (result.results[i]?.contribution ?? 0), 0) : null
+                      return (
+                        <tr key={node.key} className="border-t border-gray-200 bg-gray-50/70 cursor-pointer hover:bg-gray-100"
+                          onClick={() => toggleGroup(node.path)}>
+                          <td colSpan={6} className="py-1.5 font-semibold text-gray-700"
+                            style={{ paddingLeft: 12 + node.depth * 20 }}>
+                            <span className="inline-flex items-center gap-1">
+                              {isCollapsed
+                                ? <><Folder size={12} className="text-gray-400" /><ChevronRight size={12} className="text-gray-400" /></>
+                                : <><FolderOpen size={12} className="text-blue-400" /><ChevronDown size={12} className="text-gray-400" /></>}
+                              {node.name}
+                            </span>
+                            <span className="text-gray-400 font-normal ml-1">
+                              ({node.allIndices.length} part{node.allIndices.length === 1 ? '' : 's'})
+                            </span>
                           </td>
                           <td className="px-3 py-1.5 text-right font-mono font-semibold">
-                            {result ? section.indices.reduce(
-                              (s, i) => s + (result.results[i]?.total_failure_rate ?? 0), 0).toFixed(5) : '—'}
+                            {groupLambda != null ? groupLambda.toFixed(5) : '—'}
                           </td>
                           <td className="px-3 py-1.5 text-right font-mono font-semibold">
-                            {result ? `${(section.indices.reduce(
-                              (s, i) => s + (result.results[i]?.contribution ?? 0), 0) * 100).toFixed(1)}%` : '—'}
+                            {groupContrib != null ? `${(groupContrib * 100).toFixed(1)}%` : '—'}
                           </td>
                           <td colSpan={2}></td>
                         </tr>
-                      )}
-                      {section.indices.map(i => {
-                        const p = parts[i]
-                        const r = result?.results[i]
-                        return (
-                          <tr key={i}
-                            onClick={() => setSelectedPartIdx(selectedPartIdx === i ? null : i)}
-                            className={`border-t border-gray-100 group cursor-pointer hover:bg-blue-50/50 ${selectedPartIdx === i ? 'bg-blue-50' : ''}`}>
-                            <td className={`px-3 py-1.5 font-medium ${section.group ? 'pl-7' : ''}`}>
-                              {p.name || `${CATEGORY_LABELS[p.category]} ${i + 1}`}
-                            </td>
-                            <td className="px-3 py-1.5 text-gray-500">{CATEGORY_LABELS[p.category] ?? p.category}</td>
-                            <td className="px-1 py-1 text-right" onClick={e => e.stopPropagation()}>
-                              <input type="number" min={1} value={p.quantity}
-                                onChange={e => updatePartQty(i, e.target.value)}
-                                className="w-14 text-xs text-right border border-transparent hover:border-gray-200 focus:border-blue-400 rounded px-1 py-0.5 focus:outline-none" />
-                            </td>
-                            <td className="px-3 py-1.5 text-right font-mono text-gray-500">
-                              {Number(p.params.multiplier ?? 1)}
-                            </td>
-                            <td className="px-3 py-1.5 text-center">
-                              {NO_ENV_CATEGORIES.has(p.category) ? (
-                                <span className="text-gray-300">n/a</span>
-                              ) : (
-                                <button onClick={e => { e.stopPropagation(); cyclePartVita(i) }}
-                                  title="Click to cycle: Global / On / Off"
-                                  className={`px-2 py-0.5 text-[10px] font-semibold rounded transition-colors ${
-                                    p.apply_vita == null
-                                      ? 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-                                      : p.apply_vita
-                                        ? 'bg-purple-100 text-purple-700 hover:bg-purple-200'
-                                        : 'bg-blue-50 text-blue-600 hover:bg-blue-100'
-                                  }`}>
-                                  {vitaLabel(p.apply_vita, vitaGlobal)}
-                                </button>
-                              )}
-                            </td>
-                            <td className="px-3 py-1.5 text-right font-mono">{r ? r.failure_rate.toFixed(5) : '—'}</td>
-                            <td className="px-3 py-1.5 text-right font-mono">{r ? r.total_failure_rate.toFixed(5) : '—'}</td>
-                            <td className="px-3 py-1.5 text-right font-mono">{r ? `${(r.contribution * 100).toFixed(1)}%` : '—'}</td>
-                            <td className="px-3 py-1.5 text-gray-500 font-mono text-[10px]">
-                              {r ? Object.entries(r.pi_factors).map(([k, v]) => `${k}=${v}`).join('  ') : '—'}
-                            </td>
-                            <td className="px-1 py-1.5 text-center">
-                              <button onClick={e => { e.stopPropagation(); removePart(i); if (selectedPartIdx === i) setSelectedPartIdx(null); else if (selectedPartIdx != null && selectedPartIdx > i) setSelectedPartIdx(selectedPartIdx - 1) }}
-                                className="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <Trash2 size={12} />
-                              </button>
-                            </td>
-                          </tr>
-                        )
-                      })}
-                    </Fragment>
-                  ))}
+                      )
+                    }
+                    const i = row.index
+                    const p = parts[i]
+                    const r = result?.results[i]
+                    return (
+                      <tr key={`p${i}`}
+                        onClick={() => setSelectedPartIdx(selectedPartIdx === i ? null : i)}
+                        className={`border-t border-gray-100 group cursor-pointer hover:bg-blue-50/50 ${selectedPartIdx === i ? 'bg-blue-50' : ''}`}>
+                        <td className="py-1.5 font-medium" style={{ paddingLeft: 12 + row.depth * 20 }}>
+                          {p.name || `${CATEGORY_LABELS[p.category]} ${i + 1}`}
+                        </td>
+                        <td className="px-3 py-1.5 text-gray-500">{CATEGORY_LABELS[p.category] ?? p.category}</td>
+                        <td className="px-1 py-1 text-right" onClick={e => e.stopPropagation()}>
+                          <input type="number" min={1} value={p.quantity}
+                            onChange={e => updatePartQty(i, e.target.value)}
+                            className="w-14 text-xs text-right border border-transparent hover:border-gray-200 focus:border-blue-400 rounded px-1 py-0.5 focus:outline-none" />
+                        </td>
+                        <td className="px-3 py-1.5 text-right font-mono text-gray-500">
+                          {Number(p.params.multiplier ?? 1)}
+                        </td>
+                        <td className="px-3 py-1.5 text-center">
+                          {NO_ENV_CATEGORIES.has(p.category) ? (
+                            <span className="text-gray-300">n/a</span>
+                          ) : (
+                            <button onClick={e => { e.stopPropagation(); cyclePartVita(i) }}
+                              title="Click to cycle: Global / On / Off"
+                              className={`px-2 py-0.5 text-[10px] font-semibold rounded transition-colors ${
+                                p.apply_vita == null
+                                  ? 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                                  : p.apply_vita
+                                    ? 'bg-purple-100 text-purple-700 hover:bg-purple-200'
+                                    : 'bg-blue-50 text-blue-600 hover:bg-blue-100'
+                              }`}>
+                              {vitaLabel(p.apply_vita, vitaGlobal)}
+                            </button>
+                          )}
+                        </td>
+                        <td className="px-3 py-1.5 text-right font-mono">{r ? r.failure_rate.toFixed(5) : '—'}</td>
+                        <td className="px-3 py-1.5 text-right font-mono">{r ? r.total_failure_rate.toFixed(5) : '—'}</td>
+                        <td className="px-3 py-1.5 text-right font-mono">{r ? `${(r.contribution * 100).toFixed(1)}%` : '—'}</td>
+                        <td className="px-3 py-1.5 text-gray-500 font-mono text-[10px]">
+                          {r ? Object.entries(r.pi_factors).map(([k, v]) => `${k}=${v}`).join('  ') : '—'}
+                        </td>
+                        <td className="px-1 py-1.5 text-center">
+                          <button onClick={e => { e.stopPropagation(); removePart(i); if (selectedPartIdx === i) setSelectedPartIdx(null); else if (selectedPartIdx != null && selectedPartIdx > i) setSelectedPartIdx(selectedPartIdx - 1) }}
+                            className="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <Trash2 size={12} />
+                          </button>
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
@@ -842,7 +904,7 @@ export default function Prediction() {
                 <label className="block text-xs font-medium text-gray-500 mb-0.5">Group</label>
                 <input type="text" value={selectedPart.group ?? ''} list="detail-part-groups"
                   onChange={e => updatePartField(selectedPartIdx, 'group', e.target.value || undefined)}
-                  placeholder="e.g. PSU"
+                  placeholder="e.g. PSU > DC-DC"
                   className="w-full text-xs border border-gray-300 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-400" />
                 <datalist id="detail-part-groups">
                   {[...new Set(parts.map(p => p.group?.trim()).filter(Boolean))].map(g =>

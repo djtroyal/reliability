@@ -19,6 +19,7 @@ import numpy as np
 import pandas as pd
 import warnings
 from scipy.optimize import minimize
+from scipy import stats as ss
 from reliability.Distributions import (
     Weibull_Distribution, Exponential_Distribution,
     Normal_Distribution, Lognormal_Distribution,
@@ -68,6 +69,10 @@ _DIST_INFO = {
         'make': lambda scale, shape: Weibull_Distribution(eta=scale, beta=shape),
         'pdf': lambda x, scale, shape: Weibull_Distribution(eta=scale, beta=shape)._pdf(x),
         'sf': lambda x, scale, shape: Weibull_Distribution(eta=scale, beta=shape)._sf(x),
+        # Vectorized log-density/log-survival (scale may be an array of per-point
+        # characteristic lives); matches scipy weibull_min(c=beta, scale=eta).
+        'logpdf': lambda x, scale, shape: ss.weibull_min.logpdf(x, c=shape, scale=scale),
+        'logsf': lambda x, scale, shape: ss.weibull_min.logsf(x, c=shape, scale=scale),
     },
     'Lognormal': {
         'class': Lognormal_Distribution,
@@ -76,6 +81,9 @@ _DIST_INFO = {
         'make': lambda scale, shape: Lognormal_Distribution(mu=scale, sigma=shape),
         'pdf': lambda x, scale, shape: Lognormal_Distribution(mu=scale, sigma=shape)._pdf(x),
         'sf': lambda x, scale, shape: Lognormal_Distribution(mu=scale, sigma=shape)._sf(x),
+        # scale is mu (log-scale) → scipy lognorm(s=sigma, scale=exp(mu)).
+        'logpdf': lambda x, scale, shape: ss.lognorm.logpdf(x, s=shape, scale=np.exp(scale)),
+        'logsf': lambda x, scale, shape: ss.lognorm.logsf(x, s=shape, scale=np.exp(scale)),
     },
     'Normal': {
         'class': Normal_Distribution,
@@ -84,6 +92,9 @@ _DIST_INFO = {
         'make': lambda scale, shape: Normal_Distribution(mu=scale, sigma=shape),
         'pdf': lambda x, scale, shape: Normal_Distribution(mu=scale, sigma=shape)._pdf(x),
         'sf': lambda x, scale, shape: Normal_Distribution(mu=scale, sigma=shape)._sf(x),
+        # scale is the mean (loc); shape is sigma.
+        'logpdf': lambda x, scale, shape: ss.norm.logpdf(x, loc=scale, scale=shape),
+        'logsf': lambda x, scale, shape: ss.norm.logsf(x, loc=scale, scale=shape),
     },
     'Exponential': {
         'class': Exponential_Distribution,
@@ -92,6 +103,9 @@ _DIST_INFO = {
         'make': lambda scale, shape=None: Exponential_Distribution(Lambda=1.0 / scale),
         'pdf': lambda x, scale, shape=None: Exponential_Distribution(Lambda=1.0 / scale)._pdf(x),
         'sf': lambda x, scale, shape=None: Exponential_Distribution(Lambda=1.0 / scale)._sf(x),
+        # scale is the mean life (1/Lambda) → scipy expon(scale=mean).
+        'logpdf': lambda x, scale, shape=None: ss.expon.logpdf(x, scale=scale),
+        'logsf': lambda x, scale, shape=None: ss.expon.logsf(x, scale=scale),
     },
 }
 
@@ -110,48 +124,43 @@ def _alt_neg_log_likelihood(params, base_dist_name, life_stress_func, is_dual,
     life_params = params[:n_life_params]
     shape = params[n_life_params] if has_shape else None
 
+    # A negative/zero shape parameter is invalid for every base distribution.
+    if has_shape and (shape <= 0 or not np.isfinite(shape)):
+        return np.inf
+
     LL = 0.0
 
+    # Vectorized log-likelihood: the per-point characteristic life varies with
+    # stress, so scipy's broadcasting (array scale parameter) replaces what used
+    # to be a Python loop constructing one Distribution object per data point.
+    # This is ~50-100x faster and prevents the optimizer from appearing to hang.
     try:
-        if len(failures) > 0:
-            if is_dual:
-                scales = life_stress_func(failure_stress[:, 0], failure_stress[:, 1], *life_params)
-            else:
-                scales = life_stress_func(failure_stress, *life_params)
-
-            scales = np.asarray(scales, dtype=float)
-            if np.any(scales <= 0) or np.any(np.isnan(scales)):
-                return np.inf
-
-            for i in range(len(failures)):
-                try:
-                    dist = dist_info['make'](scales[i], shape)
-                    pdf_val = dist._pdf(np.array([failures[i]]))[0]
-                    if pdf_val <= 0 or np.isnan(pdf_val):
-                        return np.inf
-                    LL += np.log(max(pdf_val, 1e-300))
-                except (ValueError, RuntimeError):
+        with np.errstate(all='ignore'):
+            if len(failures) > 0:
+                if is_dual:
+                    scales = life_stress_func(failure_stress[:, 0], failure_stress[:, 1], *life_params)
+                else:
+                    scales = life_stress_func(failure_stress, *life_params)
+                scales = np.asarray(scales, dtype=float)
+                if np.any(scales <= 0) or np.any(~np.isfinite(scales)):
                     return np.inf
-
-        if right_censored is not None and len(right_censored) > 0:
-            if is_dual:
-                scales_rc = life_stress_func(rc_stress[:, 0], rc_stress[:, 1], *life_params)
-            else:
-                scales_rc = life_stress_func(rc_stress, *life_params)
-
-            scales_rc = np.asarray(scales_rc, dtype=float)
-            if np.any(scales_rc <= 0) or np.any(np.isnan(scales_rc)):
-                return np.inf
-
-            for i in range(len(right_censored)):
-                try:
-                    dist = dist_info['make'](scales_rc[i], shape)
-                    sf_val = dist._sf(np.array([right_censored[i]]))[0]
-                    if sf_val <= 0 or np.isnan(sf_val):
-                        return np.inf
-                    LL += np.log(max(sf_val, 1e-300))
-                except (ValueError, RuntimeError):
+                logpdf = dist_info['logpdf'](failures, scales, shape)
+                if np.any(~np.isfinite(logpdf)):
                     return np.inf
+                LL += float(np.sum(logpdf))
+
+            if right_censored is not None and len(right_censored) > 0:
+                if is_dual:
+                    scales_rc = life_stress_func(rc_stress[:, 0], rc_stress[:, 1], *life_params)
+                else:
+                    scales_rc = life_stress_func(rc_stress, *life_params)
+                scales_rc = np.asarray(scales_rc, dtype=float)
+                if np.any(scales_rc <= 0) or np.any(~np.isfinite(scales_rc)):
+                    return np.inf
+                logsf = dist_info['logsf'](right_censored, scales_rc, shape)
+                if np.any(~np.isfinite(logsf)):
+                    return np.inf
+                LL += float(np.sum(logsf))
 
     except Exception:
         return np.inf
@@ -181,10 +190,15 @@ class _ALT_Fitter_Base:
 
         for method_name in ['Nelder-Mead', 'L-BFGS-B', 'Powell']:
             try:
-                opts = {'maxiter': 20000}
+                # A generous but bounded iteration budget with convergence
+                # tolerances; an un-converging simplex previously ran the full
+                # 20000 iterations on every restart, which dominated runtime.
                 if method_name == 'L-BFGS-B':
+                    opts = {'maxiter': 5000}
                     result = minimize(neg_ll, x0, method=method_name, bounds=bounds, options=opts)
                 else:
+                    opts = {'maxiter': 5000, 'xatol': 1e-6, 'fatol': 1e-6} \
+                        if method_name == 'Nelder-Mead' else {'maxiter': 5000}
                     result = minimize(neg_ll, x0, method=method_name, options=opts)
                 if result.fun < best_fun and np.isfinite(result.fun):
                     best_fun = result.fun
@@ -236,8 +250,21 @@ class _ALT_Fitter_Base:
             self.distribution_at_use_stress = None
 
 
-def _compute_initial_guess_single(stress_model_name, mean_life, mean_stress, all_stresses, all_failures):
-    """Compute data-driven initial guesses for single-stress ALT models."""
+def _compute_initial_guess_single(stress_model_name, mean_life, mean_stress,
+                                  all_stresses, all_failures, base_dist_name='Weibull'):
+    """Compute data-driven initial guesses for single-stress ALT models.
+
+    For the Lognormal base distribution the life-stress model predicts ``mu``
+    (the mean of log-life), not the life itself, so the per-stress lives are
+    transformed into log-space before solving for the life-stress parameters.
+    Without this the initial ``mu`` is on the order of the raw life (thousands),
+    implying a median of ``exp(life)`` and leaving the optimizer to crawl back
+    from an astronomically wrong point (the cause of multi-minute "hangs").
+    """
+    log_scale = (base_dist_name == 'Lognormal')
+    all_failures = np.log(all_failures) if log_scale else all_failures
+    mean_life = np.log(mean_life) if log_scale else mean_life
+
     unique_stresses = np.unique(all_stresses)
     if len(unique_stresses) >= 2:
         mean_lives = []
@@ -317,7 +344,8 @@ def _make_single_stress_alt_fitter(base_dist_name, stress_model_name, life_stres
             mean_life = np.mean(failures)
             mean_stress = np.mean(failure_stress)
             x0 = _compute_initial_guess_single(
-                stress_model_name, mean_life, mean_stress, failure_stress, failures)
+                stress_model_name, mean_life, mean_stress, failure_stress, failures,
+                base_dist_name)
             bounds = [(None, None), (None, None)]
             if has_shape:
                 x0.append(2.0)

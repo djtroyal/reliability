@@ -77,6 +77,14 @@ class SpecialModelRequest(BaseModel):
     CI: float = 0.95
 
 
+class WeibayesRequest(BaseModel):
+    """Weibayes (Bayesian Weibull) fit with a fixed assumed shape parameter."""
+    failures: list[float]
+    right_censored: Optional[list[float]] = None
+    beta: float          # assumed/fixed Weibull shape
+    CI: float = 0.95
+
+
 # --- ALT ---
 
 class ALTFitRequest(BaseModel):
@@ -124,6 +132,16 @@ class TestPlannerRequest(BaseModel):
     number_of_failures: Optional[int] = None
     CI: float = 0.90
     two_sided: bool = False
+
+
+class PassProbRequest(BaseModel):
+    test_duration: float           # total test duration T (all units combined)
+    allowable_failures: int = 0    # c
+    true_mtbf: float               # assumed true MTBF M
+    # OC curve: range of true_mtbf values to sweep
+    oc_mtbf_min: Optional[float] = None
+    oc_mtbf_max: Optional[float] = None
+    oc_points: int = 200
 
 
 class TestDurationRequest(BaseModel):
@@ -236,7 +254,7 @@ class RBDRequest(BaseModel):
 
 class FTNode(BaseModel):
     id: str
-    type: str  # 'basic' | 'and' | 'or' | 'vote'
+    type: str  # 'basic' | 'and' | 'or' | 'vote' | 'pand' | 'xor' | 'not' | 'transfer'
     data: dict[str, Any]
 
 
@@ -245,12 +263,26 @@ class FTEdge(BaseModel):
     target: str  # child event/gate
 
 
+class FaultTreeGraph(BaseModel):
+    """A single fault tree's graph, used both as the primary request body and
+    as referenced sub-trees for Transfer gates (#9)."""
+    nodes: list[FTNode]
+    edges: list[FTEdge]
+
+
 class FaultTreeRequest(BaseModel):
     nodes: list[FTNode]
     edges: list[FTEdge]
     # Global exposure/mission time used for distribution-based basic events
     # that do not carry their own ``exposure_time`` override.
     exposure_time: Optional[float] = None
+    # Calculation methods to report top-event probability for (#7).
+    # Subset of {'exact', 'rare_event', 'min_cut_upper_bound'}.
+    methods: Optional[list[str]] = None
+    # Other trees referenced by Transfer gates, keyed by tree id (#9).
+    trees: Optional[dict[str, FaultTreeGraph]] = None
+    # Id of the tree being analyzed (for transfer-gate cycle detection).
+    tree_id: Optional[str] = None
 
 
 # --- Stress-Strength Interference ---

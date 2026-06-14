@@ -23,6 +23,8 @@ import { useFolioState, useRevision } from '../../store/project'
 import FolioBar from '../shared/FolioBar'
 import LibraryPanel, { LibraryItem } from '../shared/LibraryPanel'
 import { computeCDF, DIST_OPTIONS, DIST_PARAMS } from '../FaultTree'
+import { useLdaFolios } from '../shared/ldaFolios'
+import ExportDiagramButton from '../shared/ExportDiagramButton'
 
 // --- Custom node components ---
 
@@ -52,6 +54,11 @@ function ComponentNode({ data, selected }: NodeProps) {
       <Handle type="target" position={Position.Left} className="!bg-blue-400" />
       <div className="font-medium text-gray-800 truncate">{String(data.label || 'Component')}</div>
       <div className="text-gray-500 mt-0.5">R = {String(data.reliability ?? 0.9)}</div>
+      {data.ldaSourceName != null && (
+        <div className="text-[10px] text-blue-500 mt-0.5 truncate" title={String(data.ldaSourceName)}>
+          {String(data.ldaSourceName)}
+        </div>
+      )}
       <Handle type="source" position={Position.Right} className="!bg-blue-400" />
     </div>
   )
@@ -70,6 +77,7 @@ const INITIAL_CANVAS: CanvasState = { nodes: DEFAULT_NODES, edges: [] }
 export default function SystemReliability() {
   const [persisted, setPersisted, folios] = useFolioState<CanvasState>('system', INITIAL_CANVAS)
   const revision = useRevision()
+  const ldaFolios = useLdaFolios()
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>(sanitizeNodes(persisted.nodes ?? []))
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(persisted.edges)
   const [selectedNode, setSelectedNode] = useState<Node | null>(null)
@@ -85,6 +93,7 @@ export default function SystemReliability() {
   const latest = useRef({ nodes, edges })
   latest.current = { nodes, edges }
   const persistTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const flowWrapperRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (persistTimer.current) clearTimeout(persistTimer.current)
     persistTimer.current = setTimeout(() => setPersisted(latest.current), 250)
@@ -264,6 +273,8 @@ export default function SystemReliability() {
           <LayoutGrid size={14} /> Auto Layout
         </button>
 
+        <ExportDiagramButton getElement={() => flowWrapperRef.current} baseName="rbd" />
+
         <button
           onClick={deleteSelected}
           disabled={!selectedNode || selectedNode.type === 'source' || selectedNode.type === 'sink'}
@@ -288,6 +299,37 @@ export default function SystemReliability() {
                   className="w-full text-sm border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400"
                 />
               </div>
+              {ldaFolios.length > 0 && (
+                <div>
+                  <label className="text-xs text-gray-500 mb-0.5 block">Reliability source</label>
+                  <select
+                    value={String(selectedNode.data.ldaSource ?? '')}
+                    onChange={e => {
+                      const srcId = e.target.value
+                      if (!srcId) {
+                        updateSelectedDataMulti({ ldaSource: undefined, ldaSourceName: undefined })
+                      } else {
+                        const src = ldaFolios.find(f => f.id === srcId)
+                        if (src) {
+                          updateSelectedDataMulti({
+                            distribution: src.dist,
+                            dist_params: src.dist_params,
+                            ldaSource: src.id,
+                            ldaSourceName: src.name,
+                            mission_time: missionTime,
+                          })
+                        }
+                      }
+                    }}
+                    className="w-full text-xs border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                  >
+                    <option value="">Manual / distribution</option>
+                    {ldaFolios.map(src => (
+                      <option key={src.id} value={src.id}>{src.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <div>
                 <label className="text-xs text-gray-500 mb-0.5 block flex items-center gap-1"
                   title="Choose 'Manual' to type a reliability directly, or pick a life distribution and enter its parameters + a mission time — the component reliability is then R(t) = 1 − CDF(t).">
@@ -407,7 +449,7 @@ export default function SystemReliability() {
 
       {/* Canvas */}
       <CanvasErrorBoundary onReset={autoLayout}>
-        <div className="flex-1 relative">
+        <div ref={flowWrapperRef} className="flex-1 relative">
           <ReactFlow
             nodes={nodes}
             edges={edges}

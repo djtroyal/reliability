@@ -37,6 +37,7 @@ export const MODULE_LABELS: Record<string, string> = {
   regression: 'Regression Analysis',
   doe: 'Design of Experiments',
   msa: 'MSA',
+  sixSigma: 'Six Sigma',
   library: 'Component/Event Library',
 }
 

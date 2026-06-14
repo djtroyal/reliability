@@ -215,6 +215,36 @@ export interface SpecialModelResponse {
 export const fitSpecialModel = (req: SpecialModelRequest) =>
   api.post<SpecialModelResponse>('/life-data/special', req).then(r => r.data)
 
+// Weibayes (#15)
+export interface WeibayesRequest {
+  failures: number[]
+  right_censored?: number[]
+  beta: number
+  CI?: number
+}
+export interface WeibayesResponse {
+  beta: number
+  eta: number | null
+  eta_lower: number | null
+  eta_upper: number | null
+  r: number
+  n_total: number
+  sum_tb: number
+  CI: number
+  zero_failure: boolean
+  curves: {
+    x: number[]
+    sf: number[]
+    cdf: number[]
+    pdf: number[]
+    hf: number[]
+    sf_lower: (number | null)[]
+    sf_upper: (number | null)[]
+  }
+}
+export const fitWeibayes = (req: WeibayesRequest) =>
+  api.post<WeibayesResponse>('/life-data/weibayes', req).then(r => r.data)
+
 // --- Reliability Testing tools ---
 
 export const oneSampleProportion = (req: { trials: number; successes: number; CI?: number }) =>
@@ -426,6 +456,12 @@ export interface FTEdge {
   target: string
 }
 
+export interface FTCutSetFormula {
+  events: string[]
+  formula: string
+  value: number | null
+}
+
 export interface FaultTreeResponse {
   top_event_probability: number
   minimal_cut_sets: string[][]
@@ -436,11 +472,37 @@ export interface FaultTreeResponse {
     RAW: number | null
     RRW: number | null
   }[]
+  methods?: Record<string, number | null>
+  formulas?: {
+    boolean_expression: string
+    probability_expression: string
+    cut_sets: FTCutSetFormula[]
+  }
 }
 
-export const analyzeFaultTree = (nodes: FTNode[], edges: FTEdge[], exposureTime?: number | null) =>
-  api.post<FaultTreeResponse>('/fault-tree/analyze', { nodes, edges, exposure_time: exposureTime })
-    .then(r => r.data)
+export interface FaultTreeGraph {
+  nodes: FTNode[]
+  edges: FTEdge[]
+}
+
+export interface AnalyzeFaultTreeOptions {
+  exposureTime?: number | null
+  methods?: string[]
+  trees?: Record<string, FaultTreeGraph>
+  treeId?: string | null
+}
+
+export const analyzeFaultTree = (
+  nodes: FTNode[], edges: FTEdge[], opts: AnalyzeFaultTreeOptions = {},
+) =>
+  api.post<FaultTreeResponse>('/fault-tree/analyze', {
+    nodes,
+    edges,
+    exposure_time: opts.exposureTime ?? null,
+    methods: opts.methods,
+    trees: opts.trees,
+    tree_id: opts.treeId ?? null,
+  }).then(r => r.data)
 
 // --- Stress-Strength Interference ---
 
@@ -467,6 +529,20 @@ export interface AccelerationFactorResponse {
 export const computeAccelerationFactor = (req: {
   model: string; stress_test: number; stress_use: number; params: Record<string, number>
 }) => api.post<AccelerationFactorResponse>('/alt/acceleration-factor', req).then(r => r.data)
+
+export interface PassProbResponse {
+  test_duration: number
+  allowable_failures: number
+  true_mtbf: number
+  lambda: number
+  p_pass: number
+  oc_curve: { mtbf: number[]; p_pass: (number | null)[] } | null
+}
+
+export const computePassProbability = (req: {
+  test_duration: number; allowable_failures: number; true_mtbf: number
+  oc_mtbf_min?: number; oc_mtbf_max?: number; oc_points?: number
+}) => api.post<PassProbResponse>('/alt/pass-probability', req).then(r => r.data)
 
 // --- Physics of Failure ---
 
@@ -654,6 +730,7 @@ export interface MCFResponse {
     alpha: number; beta: number; r_squared: number
     time: number[]; MCF: number[]; CI: number
   } | null
+  trend?: { trend: string; detail: string }
 }
 export const computeMCF = (req: { data: number[][]; CI?: number; parametric?: boolean }) =>
   api.post<MCFResponse>('/growth/mcf', req).then(r => r.data)

@@ -18,6 +18,52 @@ from schemas import (
 router = APIRouter()
 
 
+def _mcf_trend(times: list, mcf_vals: list) -> dict:
+    """Classify MCF trend as improving / constant / worsening.
+
+    Splits the time series into two halves by index, fits a linear regression
+    to each half, and compares the slopes (recurrence rates).
+    """
+    if len(times) < 4:
+        return {"trend": "constant", "detail": "Insufficient data for trend analysis."}
+
+    t = np.asarray(times, dtype=float)
+    m = np.asarray(mcf_vals, dtype=float)
+
+    mid = len(t) // 2
+    t1, m1 = t[:mid], m[:mid]
+    t2, m2 = t[mid:], m[mid:]
+
+    # Linear regression slope for each half (polyfit degree 1)
+    slope1 = float(np.polyfit(t1, m1, 1)[0])
+    slope2 = float(np.polyfit(t2, m2, 1)[0])
+
+    # Guard against division by zero / negative slopes
+    if slope1 <= 0:
+        ratio = 1.0
+    else:
+        ratio = slope2 / slope1
+
+    if ratio < 0.85:
+        trend_str = "improving"
+        direction = "decreased"
+        verdict = "system appears to be improving (reliability growth)"
+    elif ratio > 1.15:
+        trend_str = "worsening"
+        direction = "increased"
+        verdict = "system appears to be worsening (reliability degradation)"
+    else:
+        trend_str = "constant"
+        direction = "remained stable"
+        verdict = "recurrence rate is approximately constant"
+
+    detail_str = (
+        f"Recurrence rate {direction} from {slope1:.2e} to {slope2:.2e} "
+        f"per unit time (ratio {ratio:.2f}) — {verdict}."
+    )
+    return {"trend": trend_str, "detail": detail_str}
+
+
 @router.post("/fit")
 def fit_growth(req: GrowthRequest):
     """Fit a Crow-AMSAA (NHPP power law, MLE) or Duane (regression)
@@ -138,6 +184,8 @@ def mcf(req: MCFRequest):
             # Drop the nested non-parametric copy to keep the payload small.
             par.pop("np", None)
             out["parametric"] = par
+        # Trend interpretation from non-parametric MCF
+        out["trend"] = _mcf_trend(np_res["time"], np_res["MCF"])
         return out
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

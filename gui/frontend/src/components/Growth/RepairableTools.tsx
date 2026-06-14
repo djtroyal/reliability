@@ -247,6 +247,7 @@ function MCF() {
   }
 
   const np = res?.nonparametric
+  const resTrend = res ? (res as MCFResponse & { trend?: { trend: string; detail: string } }).trend : null
   return (
     <div className="flex flex-1 overflow-hidden">
       <div className="w-80 flex-shrink-0 bg-white border-r border-gray-200 overflow-y-auto p-4 flex flex-col gap-3">
@@ -284,6 +285,20 @@ function MCF() {
                 <Card label="Power-law β" value={res.parametric.beta.toFixed(4)} accent />
                 <Card label="Power-law α" value={res.parametric.alpha.toFixed(2)} />
                 <Card label="R²" value={res.parametric.r_squared.toFixed(4)} />
+              </div>
+            )}
+            {resTrend && (
+              <div className={`mb-4 flex items-start gap-3 rounded-lg border p-3 ${
+                resTrend.trend === 'improving' ? 'bg-green-50 border-green-200' :
+                resTrend.trend === 'worsening' ? 'bg-red-50 border-red-200' :
+                'bg-gray-50 border-gray-200'
+              }`}>
+                <span className={`text-xs font-bold uppercase px-2 py-0.5 rounded ${
+                  resTrend.trend === 'improving' ? 'bg-green-100 text-green-700' :
+                  resTrend.trend === 'worsening' ? 'bg-red-100 text-red-700' :
+                  'bg-gray-100 text-gray-600'
+                }`}>{resTrend.trend}</span>
+                <p className="text-xs text-gray-600 leading-snug">{resTrend.detail}</p>
               </div>
             )}
             <div className="bg-white border border-gray-200 rounded-lg" style={{ height: 440 }}>

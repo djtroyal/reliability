@@ -1,5 +1,6 @@
 """Accelerated Life Testing router."""
 
+import math
 import sys
 import warnings
 import numpy as np
@@ -21,10 +22,71 @@ from schemas import (
     ALTFitRequest, SampleSizeRequest, AccelerationFactorRequest,
     OneSampleProportionRequest, TwoProportionRequest, NoFailuresRequest,
     SequentialSamplingRequest, TestPlannerRequest, TestDurationRequest,
-    GoodnessOfFitRequest,
+    GoodnessOfFitRequest, PassProbRequest,
 )
 
 router = APIRouter()
+
+
+def _poisson_pass_prob(lam: float, c: int) -> float:
+    """P(X <= c) where X ~ Poisson(lam). Returns a float in [0, 1]."""
+    if lam <= 0.0:
+        return 1.0
+    if c < 0:
+        return 0.0
+    try:
+        from scipy.stats import poisson as _poisson
+        result = float(_poisson.cdf(c, lam))
+    except ImportError:
+        # Manual Poisson CDF sum
+        exp_neg_lam = math.exp(-lam)
+        total = 0.0
+        power = 1.0
+        for k in range(c + 1):
+            if k > 0:
+                power *= lam / k
+            total += exp_neg_lam * power
+        result = total
+    # Guard against floating-point drift outside [0, 1]
+    return max(0.0, min(1.0, result))
+
+
+@router.post("/pass-probability")
+def pass_probability(req: PassProbRequest):
+    """Probability of passing a Poisson-model reliability demonstration test."""
+    if req.test_duration <= 0:
+        raise HTTPException(status_code=400, detail="test_duration must be > 0.")
+    if req.true_mtbf <= 0:
+        raise HTTPException(status_code=400, detail="true_mtbf must be > 0.")
+    if req.allowable_failures < 0:
+        raise HTTPException(status_code=400, detail="allowable_failures must be >= 0.")
+
+    lam = req.test_duration / req.true_mtbf
+    p_pass = _poisson_pass_prob(lam, req.allowable_failures)
+
+    oc_curve = None
+    if req.oc_mtbf_min is not None and req.oc_mtbf_max is not None:
+        if req.oc_mtbf_min <= 0 or req.oc_mtbf_max <= 0:
+            raise HTTPException(status_code=400, detail="OC curve MTBF bounds must be > 0.")
+        mtbf_vals = np.linspace(req.oc_mtbf_min, req.oc_mtbf_max, max(2, req.oc_points))
+        p_pass_vals = []
+        for m in mtbf_vals:
+            lam_i = req.test_duration / float(m)
+            p_i = _poisson_pass_prob(lam_i, req.allowable_failures)
+            p_pass_vals.append(p_i if math.isfinite(p_i) else None)
+        oc_curve = {
+            "mtbf": mtbf_vals.tolist(),
+            "p_pass": p_pass_vals,
+        }
+
+    return {
+        "test_duration": req.test_duration,
+        "allowable_failures": req.allowable_failures,
+        "true_mtbf": req.true_mtbf,
+        "lambda": lam,
+        "p_pass": p_pass,
+        "oc_curve": oc_curve,
+    }
 
 
 @router.post("/one-sample-proportion")

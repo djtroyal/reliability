@@ -1,0 +1,67 @@
+"""Process Capability router."""
+
+import sys
+import math
+from pathlib import Path
+from typing import List, Optional
+
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+
+# Bootstrap the reliability src package path
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "src"))
+
+from reliability.Process_capability import process_capability
+
+router = APIRouter()
+
+
+# ---------------------------------------------------------------------------
+# Inline Pydantic schema
+# ---------------------------------------------------------------------------
+
+class CapabilityRequest(BaseModel):
+    data: List[float]
+    lsl: Optional[float] = None
+    usl: Optional[float] = None
+    target: Optional[float] = None
+    subgroup_size: int = 1
+    n_bins: Optional[int] = None
+
+
+# ---------------------------------------------------------------------------
+# Sanitizer
+# ---------------------------------------------------------------------------
+
+def _safe(obj):
+    if isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return obj
+    if isinstance(obj, dict):
+        return {k: _safe(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_safe(v) for v in obj]
+    return obj
+
+
+# ---------------------------------------------------------------------------
+# Endpoint
+# ---------------------------------------------------------------------------
+
+@router.post("/analyze")
+def analyze(req: CapabilityRequest):
+    """Run a process-capability study (Cp/Cpk/Pp/Ppk/Cpm, DPMO, histogram)."""
+    try:
+        result = process_capability(
+            data=req.data,
+            lsl=req.lsl,
+            usl=req.usl,
+            target=req.target,
+            subgroup_size=req.subgroup_size,
+            n_bins=req.n_bins,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return _safe(result)

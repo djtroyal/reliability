@@ -5,6 +5,7 @@ import {
   oneSampleProportion, twoProportionTest, sampleSizeNoFailures,
   sequentialSampling, SequentialSamplingResponse,
   testPlanner, testDuration, goodnessOfFit, GoodnessOfFitResponse,
+  computePassProbability, PassProbResponse,
 } from '../../api/client'
 import InfoLabel from '../shared/InfoLabel'
 
@@ -57,6 +58,11 @@ function Planner() {
   const [err, setErr] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
+  const [mtbfTrue, setMtbfTrue] = useState('1000')
+  const [passRes, setPassRes] = useState<PassProbResponse | null>(null)
+  const [passErr, setPassErr] = useState<string | null>(null)
+  const [passLoading, setPassLoading] = useState(false)
+
   const run = async () => {
     setErr(null); setLoading(true)
     try {
@@ -69,6 +75,35 @@ function Planner() {
       setRes(r)
     } catch (e) { setErr(detail(e, 'Error.')) } finally { setLoading(false) }
   }
+
+  const computePassProb = async () => {
+    if (!res) return
+    const trueMtbf = parseFloat(mtbfTrue)
+    if (!isFinite(trueMtbf) || trueMtbf <= 0) {
+      setPassErr('True MTBF must be a positive number.'); return
+    }
+    setPassErr(null); setPassLoading(true)
+    try {
+      const testDur = res.test_duration
+      const c = res.number_of_failures
+      const r = await computePassProbability({
+        test_duration: testDur,
+        allowable_failures: c,
+        true_mtbf: trueMtbf,
+        oc_mtbf_min: trueMtbf * 0.1,
+        oc_mtbf_max: trueMtbf * 5,
+        oc_points: 200,
+      })
+      setPassRes(r)
+    } catch (e) { setPassErr(detail(e, 'Error computing pass probability.')) } finally { setPassLoading(false) }
+  }
+
+  const pPct = passRes != null ? (passRes.p_pass * 100) : null
+  const badgeColor = pPct == null ? ''
+    : pPct >= 80 ? 'bg-green-100 text-green-800 border-green-300'
+    : pPct >= 50 ? 'bg-yellow-100 text-yellow-800 border-yellow-300'
+    : 'bg-red-100 text-red-800 border-red-300'
+
   return (
     <ToolLayout
       intro="Plans an exponential (constant failure rate) reliability demonstration test. Provide two of MTBF / test duration / number of failures and solve for the third."
@@ -93,11 +128,84 @@ function Planner() {
       </>}
       err={err} loading={loading} onRun={run} runLabel="Compute"
       results={res && (
-        <div className="grid grid-cols-3 gap-3">
-          <Card label="MTBF" value={res.MTBF.toFixed(2)} accent={solveFor === 'MTBF'} />
-          <Card label="Test duration" value={res.test_duration.toFixed(1)} accent={solveFor === 'test_duration'} />
-          <Card label="Allowable failures" value={String(res.number_of_failures)} accent={solveFor === 'number_of_failures'} />
-        </div>
+        <>
+          <div className="grid grid-cols-3 gap-3">
+            <Card label="MTBF" value={res.MTBF.toFixed(2)} accent={solveFor === 'MTBF'} />
+            <Card label="Test duration" value={res.test_duration.toFixed(1)} accent={solveFor === 'test_duration'} />
+            <Card label="Allowable failures" value={String(res.number_of_failures)} accent={solveFor === 'number_of_failures'} />
+          </div>
+
+          <hr className="my-5 border-gray-200" />
+
+          <p className="text-sm font-semibold text-gray-800 mb-3">Probability of Passing</p>
+          <p className="text-xs text-gray-500 mb-3 leading-snug">
+            Given the test design above, what is the probability of observing &le;{res.number_of_failures} failures if
+            the true MTBF equals the value below? Uses a Poisson model (exponential life).
+          </p>
+          <div className="flex items-end gap-2 mb-3">
+            <div className="flex-1">
+              <InfoLabel tip="The assumed true MTBF of the product. The OC curve sweeps a range around this value.">
+                True MTBF (assumed)
+              </InfoLabel>
+              <input
+                type="number" step="any" value={mtbfTrue}
+                onChange={e => setMtbfTrue(e.target.value)}
+                className={inputCls}
+              />
+            </div>
+            <button
+              onClick={computePassProb}
+              disabled={passLoading}
+              className="flex items-center gap-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-medium px-3 py-1.5 rounded transition-colors whitespace-nowrap"
+            >
+              <Play size={10} /> {passLoading ? 'Computing...' : 'Compute'}
+            </button>
+          </div>
+          {passErr && <p className="text-xs text-red-600 bg-red-50 p-2 rounded mb-3">{passErr}</p>}
+          {passRes != null && (
+            <>
+              <div className="flex items-center gap-3 mb-4">
+                <span className={`inline-block border rounded-full px-4 py-1 text-lg font-bold ${badgeColor}`}>
+                  {(passRes.p_pass * 100).toFixed(2)}%
+                </span>
+                <span className="text-xs text-gray-500">
+                  P(pass) &middot; &lambda; = T/M = {passRes.lambda.toFixed(4)}
+                </span>
+              </div>
+              {passRes.oc_curve && (
+                <div className="bg-white border border-gray-200 rounded-lg" style={{ height: 380 }}>
+                  <Plot
+                    data={[
+                      {
+                        x: passRes.oc_curve.mtbf,
+                        y: passRes.oc_curve.p_pass,
+                        mode: 'lines',
+                        name: 'P(pass)',
+                        line: { color: '#2563eb', width: 2 },
+                      } as Plotly.Data,
+                      {
+                        x: [passRes.true_mtbf, passRes.true_mtbf],
+                        y: [0, 1],
+                        mode: 'lines',
+                        name: 'True MTBF',
+                        line: { color: '#ef4444', width: 1.5, dash: 'dash' },
+                      } as Plotly.Data,
+                    ]}
+                    layout={{
+                      title: { text: 'Operating Characteristic (OC) Curve', font: { size: 13 } },
+                      xaxis: { title: { text: 'True MTBF' }, gridcolor: '#e5e7eb' },
+                      yaxis: { title: { text: 'P(pass)' }, range: [0, 1], gridcolor: '#e5e7eb' },
+                      margin: { t: 40, r: 20, b: 50, l: 60 },
+                      paper_bgcolor: 'white', plot_bgcolor: 'white',
+                      legend: { x: 0.7, y: 0.98, font: { size: 10 } },
+                    } as Partial<Plotly.Layout>}
+                    config={{ responsive: true }} style={{ width: '100%', height: '100%' }} useResizeHandler
+                  />
+                </div>
+              )}
+            </>
+          )}
+        </>
       )}
     />
   )

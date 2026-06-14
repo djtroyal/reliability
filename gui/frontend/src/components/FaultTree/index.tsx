@@ -16,13 +16,16 @@ import {
   type NodeChange,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { Plus, Play, Trash2, Download, LayoutGrid, Copy, Clipboard } from 'lucide-react'
-import { analyzeFaultTree, FaultTreeResponse } from '../../api/client'
+import { Plus, Play, Trash2, Download, LayoutGrid, Copy, Clipboard, GitFork } from 'lucide-react'
+import { analyzeFaultTree, FaultTreeResponse, FaultTreeGraph } from '../../api/client'
 import ResultsTable from '../shared/ResultsTable'
-import { useFolioState, useRevision } from '../../store/project'
+import { useFolioState, useRevision, getProjectState } from '../../store/project'
 import FolioBar from '../shared/FolioBar'
 import LibraryPanel, { LibraryItem } from '../shared/LibraryPanel'
 import { CanvasErrorBoundary, sanitizeNodeChanges, sanitizeNodes } from '../shared/CanvasErrorBoundary'
+import { useLdaFolios } from '../shared/ldaFolios'
+import ExportDiagramButton from '../shared/ExportDiagramButton'
+import NumberField from '../shared/NumberField'
 
 // --- Distribution CDF helpers (for computing probability from distributions) ---
 
@@ -81,14 +84,34 @@ export const DIST_PARAMS: Record<string, { key: string; label: string; default: 
   ],
 }
 
+// Basic-event probability source (#4).
+type EventSource = 'manual' | 'distribution' | 'lda'
+
+// --- Computed-probability badge shown on a node after analysis (#5) ---
+
+function ProbBadge({ data }: { data: Record<string, unknown> }) {
+  const p = data.computedP
+  if (p == null || typeof p !== 'number') return null
+  return (
+    <div
+      className="absolute -top-2 -right-2 bg-red-600 text-white text-[8px] font-mono font-semibold rounded px-1 py-0.5 shadow"
+      style={{ whiteSpace: 'nowrap' }}
+    >
+      P={p.toExponential(2)}
+    </div>
+  )
+}
+
 // --- Gate / Event node components (traditional FTA SVG shapes) ---
 
 function BasicEventNode({ data, selected }: NodeProps) {
   const highlighted = data.highlighted as boolean
   const desc = String(data.description || '')
   const isMirror = data.mirror as boolean
+  const folioName = data.ldaFolioName ? String(data.ldaFolioName) : ''
   return (
     <div className={`relative flex flex-col items-center ${selected ? 'drop-shadow-lg' : ''}`} style={{ width: 96 }}>
+      <ProbBadge data={data as Record<string, unknown>} />
       <Handle type="target" position={Position.Top} className="!bg-gray-400" style={{ top: -4 }} />
       <svg viewBox="0 0 70 70" width="70" height="70">
         <circle cx="35" cy="35" r="30"
@@ -98,7 +121,19 @@ function BasicEventNode({ data, selected }: NodeProps) {
           strokeDasharray={isMirror ? '4 2' : undefined} />
         <text x="35" y="32" textAnchor="middle" fill="#374151" fontSize="10" fontWeight="600">{String(data.label || 'Event')}</text>
         <text x="35" y="45" textAnchor="middle" fill="#6b7280" fontSize="9">p={Number(data.probability ?? 0.01).toExponential(2)}</text>
+        {isMirror && (
+          // Repeated-event marker: small diamond at bottom (#8).
+          <polygon points="35,55 41,62 35,69 29,62" fill="#f59e0b" stroke="#b45309" strokeWidth="1" />
+        )}
       </svg>
+      {isMirror && (
+        <div className="absolute -top-1 -left-1 bg-amber-500 text-white text-[7px] font-bold rounded px-1">REPEAT</div>
+      )}
+      {folioName && (
+        <div className="text-center text-[8px] leading-tight text-emerald-700 mt-0.5">
+          LDA: {folioName}
+        </div>
+      )}
       {desc && (
         <div
           title={desc}
@@ -115,6 +150,7 @@ function BasicEventNode({ data, selected }: NodeProps) {
 function AndGateNode({ data, selected }: NodeProps) {
   return (
     <div className={`relative ${selected ? 'drop-shadow-lg' : ''}`} style={{ width: 80, height: 80 }}>
+      <ProbBadge data={data as Record<string, unknown>} />
       <Handle type="target" position={Position.Top} className="!bg-indigo-400" style={{ top: -4 }} />
       <svg viewBox="0 0 80 80" className="w-full h-full">
         <path d="M 10 50 L 10 20 Q 10 5, 40 5 Q 70 5, 70 20 L 70 50 Z"
@@ -130,6 +166,7 @@ function AndGateNode({ data, selected }: NodeProps) {
 function OrGateNode({ data, selected }: NodeProps) {
   return (
     <div className={`relative ${selected ? 'drop-shadow-lg' : ''}`} style={{ width: 80, height: 80 }}>
+      <ProbBadge data={data as Record<string, unknown>} />
       <Handle type="target" position={Position.Top} className="!bg-orange-400" style={{ top: -4 }} />
       <svg viewBox="0 0 80 80" className="w-full h-full">
         <path d="M 10 55 Q 15 30, 40 5 Q 65 30, 70 55 Q 40 45, 10 55 Z"
@@ -145,6 +182,7 @@ function OrGateNode({ data, selected }: NodeProps) {
 function VoteGateNode({ data, selected }: NodeProps) {
   return (
     <div className={`relative ${selected ? 'drop-shadow-lg' : ''}`} style={{ width: 80, height: 80 }}>
+      <ProbBadge data={data as Record<string, unknown>} />
       <Handle type="target" position={Position.Top} className="!bg-purple-400" style={{ top: -4 }} />
       <svg viewBox="0 0 80 80" className="w-full h-full">
         <path d="M 10 50 L 10 20 Q 10 5, 40 5 Q 70 5, 70 20 L 70 50 Z"
@@ -160,11 +198,11 @@ function VoteGateNode({ data, selected }: NodeProps) {
 function PANDGateNode({ data, selected }: NodeProps) {
   return (
     <div className={`relative ${selected ? 'drop-shadow-lg' : ''}`} style={{ width: 80, height: 80 }}>
+      <ProbBadge data={data as Record<string, unknown>} />
       <Handle type="target" position={Position.Top} className="!bg-teal-400" style={{ top: -4 }} />
       <svg viewBox="0 0 80 80" className="w-full h-full">
         <path d="M 10 50 L 10 20 Q 10 5, 40 5 Q 70 5, 70 20 L 70 50 Z"
               fill={selected ? '#0f766e' : '#0d9488'} stroke="#134e4a" strokeWidth="2" />
-        {/* Priority indicator triangle */}
         <polygon points="40,52 34,62 46,62" fill="rgba(255,255,255,0.6)" />
         <text x="40" y="30" textAnchor="middle" fill="white" fontSize="10" fontWeight="bold">PAND</text>
         <text x="40" y="45" textAnchor="middle" fill="rgba(255,255,255,0.8)" fontSize="9">{String(data.label || '')}</text>
@@ -177,6 +215,7 @@ function PANDGateNode({ data, selected }: NodeProps) {
 function XORGateNode({ data, selected }: NodeProps) {
   return (
     <div className={`relative ${selected ? 'drop-shadow-lg' : ''}`} style={{ width: 80, height: 80 }}>
+      <ProbBadge data={data as Record<string, unknown>} />
       <Handle type="target" position={Position.Top} className="!bg-rose-400" style={{ top: -4 }} />
       <svg viewBox="0 0 80 80" className="w-full h-full">
         <path d="M 10 55 Q 15 30, 40 5 Q 65 30, 70 55 Q 40 45, 10 55 Z"
@@ -192,12 +231,11 @@ function XORGateNode({ data, selected }: NodeProps) {
 function NOTGateNode({ data, selected }: NodeProps) {
   return (
     <div className={`relative ${selected ? 'drop-shadow-lg' : ''}`} style={{ width: 80, height: 80 }}>
+      <ProbBadge data={data as Record<string, unknown>} />
       <Handle type="target" position={Position.Top} className="!bg-slate-400" style={{ top: -4 }} />
       <svg viewBox="0 0 80 80" className="w-full h-full">
-        {/* Inverter triangle pointing down */}
         <polygon points="40,5 10,60 70,60"
                  fill={selected ? '#334155' : '#475569'} stroke="#1e293b" strokeWidth="2" />
-        {/* Small circle at the bottom for NOT symbol */}
         <circle cx="40" cy="65" r="5" fill="none" stroke="#1e293b" strokeWidth="2" />
         <text x="40" y="35" textAnchor="middle" fill="white" fontSize="11" fontWeight="bold">NOT</text>
         <text x="40" y="50" textAnchor="middle" fill="rgba(255,255,255,0.8)" fontSize="9">{String(data.label || '')}</text>
@@ -208,15 +246,19 @@ function NOTGateNode({ data, selected }: NodeProps) {
 }
 
 function TransferGateNode({ data, selected }: NodeProps) {
+  const ref = data.transferToName ? String(data.transferToName) : ''
   return (
-    <div className={`relative ${selected ? 'drop-shadow-lg' : ''}`} style={{ width: 80, height: 80 }}>
+    <div className={`relative flex flex-col items-center ${selected ? 'drop-shadow-lg' : ''}`} style={{ width: 80 }}>
+      <ProbBadge data={data as Record<string, unknown>} />
       <Handle type="target" position={Position.Top} className="!bg-cyan-400" style={{ top: -4 }} />
-      <svg viewBox="0 0 80 80" className="w-full h-full">
-        {/* Triangle pointing right */}
+      <svg viewBox="0 0 80 80" width="80" height="80">
         <polygon points="10,10 70,40 10,70"
                  fill={selected ? '#0e7490' : '#0891b2'} stroke="#155e75" strokeWidth="2" />
         <text x="35" y="43" textAnchor="middle" fill="white" fontSize="11" fontWeight="bold">XFER</text>
       </svg>
+      <div className="text-center text-[8px] leading-tight text-cyan-700 -mt-1">
+        {ref ? `→ ${ref}` : '(unset)'}
+      </div>
       <Handle type="source" position={Position.Bottom} className="!bg-cyan-400" style={{ bottom: -4 }} />
     </div>
   )
@@ -241,30 +283,81 @@ const importanceCols = [
   { key: 'RRW', label: 'RRW' },
 ]
 
+const METHOD_OPTIONS: { id: string; label: string }[] = [
+  { id: 'exact', label: 'Exact (inclusion-exclusion over MCS)' },
+  { id: 'rare_event', label: 'Rare-event approximation (Σ P(MCS))' },
+  { id: 'min_cut_upper_bound', label: 'Min-cut upper bound (1 − Π(1 − P(MCS)))' },
+]
+
+const METHOD_LABELS: Record<string, string> = {
+  exact: 'Exact',
+  rare_event: 'Rare-event',
+  min_cut_upper_bound: 'Min-cut UB',
+}
+
 interface CanvasState { nodes: Node[]; edges: Edge[]; exposureTime?: string }
 const INITIAL_CANVAS: CanvasState = { nodes: [], edges: [], exposureTime: '1000' }
+
+/** Read every faultTree folio's graph as {tree_id -> graph} for transfer-gate
+ *  resolution (#9). Reads the raw module slice directly so all trees (not just
+ *  the active one) are available at analyze time. */
+function collectAllTrees(): { trees: Record<string, FaultTreeGraph>; names: Record<string, string> } {
+  const trees: Record<string, FaultTreeGraph> = {}
+  const names: Record<string, string> = {}
+  const raw = getProjectState().modules['faultTree'] as
+    | { _folioWrap?: boolean; folios?: { id: string; name: string; state?: CanvasState }[] }
+    | undefined
+  if (!raw || !raw.folios) return { trees, names }
+  for (const f of raw.folios) {
+    const st = f.state ?? INITIAL_CANVAS
+    trees[f.id] = {
+      nodes: (st.nodes ?? []).map(n => ({
+        id: n.id, type: n.type ?? 'basic', data: n.data as Record<string, unknown>,
+      })),
+      edges: (st.edges ?? []).map(e => ({ source: e.source, target: e.target })),
+    }
+    names[f.id] = f.name
+  }
+  return { trees, names }
+}
 
 export default function FaultTreePage() {
   const [persisted, setPersisted, folios] = useFolioState<CanvasState>('faultTree', INITIAL_CANVAS)
   const revision = useRevision()
+  const ldaFolios = useLdaFolios()
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>(sanitizeNodes(persisted.nodes ?? []))
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(persisted.edges)
   const [selectedNode, setSelectedNode] = useState<Node | null>(null)
   const [result, setResult] = useState<FaultTreeResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [resultTab, setResultTab] = useState<'mcs' | 'importance'>('mcs')
+  const [resultTab, setResultTab] = useState<'mcs' | 'importance' | 'formulas' | 'methods'>('mcs')
   const [activeMCS, setActiveMCS] = useState<number | null>(null)
   const [clipboard, setClipboard] = useState<Record<string, unknown> | null>(null)
   const [globalExposure, setGlobalExposure] = useState<string>(persisted.exposureTime ?? '1000')
+  const [methods, setMethods] = useState<string[]>(['exact'])
+  const flowWrapperRef = useRef<HTMLDivElement>(null)
 
-  // Compute which node IDs should be highlighted based on the selected MCS
+  // Other trees (folios) usable as transfer targets (excludes current tree).
+  const transferTargets = useMemo(
+    () => folios.folios.filter(f => f.id !== folios.activeId),
+    [folios.folios, folios.activeId],
+  )
+
+  // Compute which node IDs should be highlighted based on the selected MCS.
+  // MCS are reported by eventKey; map back to every node carrying that key.
   const highlightedNodes = useMemo<Set<string>>(() => {
     if (activeMCS == null || !result) return new Set<string>()
-    return new Set(result.minimal_cut_sets[activeMCS] ?? [])
-  }, [activeMCS, result])
+    const keys = new Set(result.minimal_cut_sets[activeMCS] ?? [])
+    const ids = new Set<string>()
+    for (const n of nodes) {
+      if (n.type !== 'basic') continue
+      const key = String(n.data.eventKey ?? n.data.label ?? n.id)
+      if (keys.has(key)) ids.add(n.id)
+    }
+    return ids
+  }, [activeMCS, result, nodes])
 
-  // Propagate highlighting data into nodes so custom node components can access it
   useEffect(() => {
     setNodes(nds => nds.map(n => {
       const isHighlighted = highlightedNodes.has(n.id)
@@ -273,11 +366,7 @@ export default function FaultTreePage() {
     }))
   }, [highlightedNodes]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Persist canvas to the project store, debounced. Writing on every drag-move
-  // event triggered a store emit (and a full re-render of every subscriber) on
-  // each pixel of movement; under rapid dragging this re-render storm could
-  // corrupt the canvas and blank the page. Debouncing coalesces a drag into a
-  // single write once motion settles, with a flush on unmount so nothing is lost.
+  // Persist canvas to the project store, debounced.
   const latest = useRef({ nodes, edges, exposureTime: globalExposure })
   latest.current = { nodes, edges, exposureTime: globalExposure }
   const persistTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -295,8 +384,6 @@ export default function FaultTreePage() {
     if (revision !== seenRevision.current || folios.activeId !== seenFolio.current) {
       seenRevision.current = revision
       seenFolio.current = folios.activeId
-      // Discard any pending debounced write so it cannot land in the newly
-      // selected folio (it belonged to the previous one).
       if (persistTimer.current) clearTimeout(persistTimer.current)
       setNodes(sanitizeNodes(persisted.nodes ?? []))
       setEdges(persisted.edges ?? [])
@@ -307,24 +394,43 @@ export default function FaultTreePage() {
     }
   }, [revision, folios.activeId]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Clear on-diagram computed-probability annotations whenever the graph
+  // changes structurally (#5).
+  const clearAnnotations = useCallback(() => {
+    setNodes(nds => nds.some(n => n.data.computedP != null)
+      ? nds.map(n => n.data.computedP != null
+        ? { ...n, data: { ...n.data, computedP: undefined } } : n)
+      : nds)
+  }, [setNodes])
+
   const onConnect = useCallback(
-    (connection: Connection) => setEdges(eds => addEdge(connection, eds)),
-    [setEdges]
+    (connection: Connection) => { setResult(null); clearAnnotations(); setEdges(eds => addEdge(connection, eds)) },
+    [setEdges, clearAnnotations],
   )
 
   const onNodesChangeWrapped = useCallback(
-    (changes: NodeChange[]) => onNodesChange(sanitizeNodeChanges(changes)),
-    [onNodesChange],
+    (changes: NodeChange[]) => {
+      // Adding/removing nodes invalidates the last result's annotations.
+      if (changes.some(c => c.type === 'add' || c.type === 'remove')) {
+        setResult(null); clearAnnotations()
+      }
+      onNodesChange(sanitizeNodeChanges(changes))
+    },
+    [onNodesChange, clearAnnotations],
   )
 
-  const addNode = (type: 'basic' | 'and' | 'or' | 'vote' | 'pand' | 'xor' | 'not' | 'transfer') => {
+  const nextNodeId = () => {
     const maxId = nodes.reduce((m, n) => {
       const match = /^n(\d+)$/.exec(n.id)
       return match ? Math.max(m, parseInt(match[1], 10)) : m
     }, 0)
-    const id = `n${maxId + 1}`
+    return `n${maxId + 1}`
+  }
+
+  const addNode = (type: 'basic' | 'and' | 'or' | 'vote' | 'pand' | 'xor' | 'not' | 'transfer') => {
+    const id = nextNodeId()
     const defaults: Record<string, unknown> = { label: `${type.toUpperCase()}_${id}` }
-    if (type === 'basic') defaults.probability = 0.01
+    if (type === 'basic') { defaults.probability = 0.01; defaults.eventKey = id }
     if (type === 'vote') defaults.k = 2
     const newNode: Node = {
       id,
@@ -332,44 +438,58 @@ export default function FaultTreePage() {
       position: { x: 200 + Math.random() * 200, y: 100 + Math.random() * 200 },
       data: defaults,
     }
+    setResult(null); clearAnnotations()
     setNodes(nds => [...nds, newNode])
   }
 
+  // #8 Copy: stash the selected node's data.
   const copyNode = () => {
     if (!selectedNode || selectedNode.type !== 'basic') return
     setClipboard({ ...selectedNode.data })
   }
 
-  const pasteAsMirror = () => {
+  // #8 Paste: a NEW independent event — fresh unique eventKey so it is treated
+  // as a distinct event in the cut-set logic.
+  const pasteAsCopy = () => {
     if (!clipboard) return
-    const maxId = nodes.reduce((m, n) => {
-      const match = /^n(\d+)$/.exec(n.id)
-      return match ? Math.max(m, parseInt(match[1], 10)) : m
-    }, 0)
-    const id = `n${maxId + 1}`
+    const id = nextNodeId()
     const newNode: Node = {
       id,
       type: 'basic',
       position: { x: 200 + Math.random() * 200, y: 100 + Math.random() * 200 },
-      data: { ...clipboard, mirror: true },
+      data: { ...clipboard, eventKey: id, mirror: false, computedP: undefined,
+        label: `${String(clipboard.label ?? 'EVENT')}_copy` },
     }
+    setResult(null); clearAnnotations()
+    setNodes(nds => [...nds, newNode])
+  }
+
+  // #8 Mirror: references the SAME underlying basic event (shared eventKey) so
+  // the backend de-duplicates it in cut sets / probability.
+  const pasteAsMirror = () => {
+    if (!clipboard) return
+    const id = nextNodeId()
+    // Preserve the source's eventKey (fall back to its label) so identity is shared.
+    const sharedKey = String(clipboard.eventKey ?? clipboard.label ?? id)
+    const newNode: Node = {
+      id,
+      type: 'basic',
+      position: { x: 200 + Math.random() * 200, y: 100 + Math.random() * 200 },
+      data: { ...clipboard, eventKey: sharedKey, mirror: true, computedP: undefined },
+    }
+    setResult(null); clearAnnotations()
     setNodes(nds => [...nds, newNode])
   }
 
   const autoLayout = () => {
-    // Find children: edges go from parent (source) to child (target)
     const children = new Map<string, string[]>()
     const hasParent = new Set<string>()
     edges.forEach(e => {
       children.set(e.source, [...(children.get(e.source) ?? []), e.target])
       hasParent.add(e.target)
     })
-
-    // Find root(s) - nodes with no parent
     const roots = nodes.filter(n => !hasParent.has(n.id)).map(n => n.id)
     if (roots.length === 0) return
-
-    // BFS to assign layers (top-down)
     const layers = new Map<string, number>()
     const queue = [...roots]
     roots.forEach(r => layers.set(r, 0))
@@ -383,16 +503,11 @@ export default function FaultTreePage() {
         }
       }
     }
-
-    // Position nodes not connected to any root
     nodes.forEach(n => { if (!layers.has(n.id)) layers.set(n.id, 0) })
-
-    // Group nodes by layer
     const byLayer = new Map<number, string[]>()
     layers.forEach((layer, id) => {
       byLayer.set(layer, [...(byLayer.get(layer) ?? []), id])
     })
-
     const xGap = 160, yGap = 140, startY = 50
     setNodes(nds => nds.map(n => {
       const layer = layers.get(n.id) ?? 0
@@ -401,10 +516,7 @@ export default function FaultTreePage() {
       const totalWidth = (nodesInLayer.length - 1) * xGap
       return {
         ...n,
-        position: {
-          x: 400 - totalWidth / 2 + idx * xGap,
-          y: startY + layer * yGap,
-        },
+        position: { x: 400 - totalWidth / 2 + idx * xGap, y: startY + layer * yGap },
       }
     }))
   }
@@ -414,6 +526,7 @@ export default function FaultTreePage() {
     setNodes(nds => nds.filter(n => n.id !== selectedNode.id))
     setEdges(eds => eds.filter(e => e.source !== selectedNode.id && e.target !== selectedNode.id))
     setSelectedNode(null)
+    setResult(null); clearAnnotations()
   }
 
   const updateData = (key: string, value: unknown) => {
@@ -438,15 +551,19 @@ export default function FaultTreePage() {
 
   const onPaneClick = useCallback(() => setSelectedNode(null), [])
 
+  const toggleMethod = (id: string) => {
+    setMethods(prev => prev.includes(id)
+      ? (prev.length > 1 ? prev.filter(m => m !== id) : prev)
+      : [...prev, id])
+  }
+
   const analyze = async () => {
     if (!nodes.length) { setError('Add nodes to the fault tree first.'); return }
     setError(null)
     setLoading(true)
     setActiveMCS(null)
     const globalT = globalExposure.trim() === '' ? undefined : parseFloat(globalExposure)
-    // Refresh node display probabilities for distribution events using the
-    // effective exposure time (event override or global), so the diagram
-    // matches what the backend computes.
+    // Refresh node display probabilities for distribution events.
     const refreshed = nodes.map(n => {
       if (n.type !== 'basic') return n
       const dist = String(n.data.distribution ?? '')
@@ -463,13 +580,95 @@ export default function FaultTreePage() {
         data: n.data as Record<string, unknown>,
       }))
       const apiEdges = edges.map(e => ({ source: e.source, target: e.target }))
-      const res = await analyzeFaultTree(apiNodes, apiEdges, globalT ?? null)
+      // Snapshot every folio so transfer gates can resolve their targets (#9).
+      // Override the active tree with the just-refreshed in-memory graph.
+      const { trees } = collectAllTrees()
+      trees[folios.activeId] = { nodes: apiNodes, edges: apiEdges }
+      const res = await analyzeFaultTree(apiNodes, apiEdges, {
+        exposureTime: globalT ?? null,
+        methods,
+        trees,
+        treeId: folios.activeId,
+      })
       setResult(res)
+      // #5 Annotate each node with its computed probability. Basic events use
+      // their own probability; gates that map 1:1 to a cut set get that value.
+      annotateNodes(refreshed, res)
     } catch (e: unknown) {
       setError((e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Analysis error.')
     } finally {
       setLoading(false)
     }
+  }
+
+  // #5 Compute a per-node probability to show on the diagram after analysis.
+  const annotateNodes = (graphNodes: Node[], res: FaultTreeResponse) => {
+    // Build children map.
+    const children = new Map<string, string[]>()
+    edges.forEach(e => children.set(e.source, [...(children.get(e.source) ?? []), e.target]))
+    const byId = new Map(graphNodes.map(n => [n.id, n]))
+
+    const memo = new Map<string, number>()
+    const evalNode = (id: string, seen: Set<string>): number => {
+      if (memo.has(id)) return memo.get(id)!
+      if (seen.has(id)) return 0
+      seen.add(id)
+      const node = byId.get(id)
+      if (!node) return 0
+      const kids = children.get(id) ?? []
+      let p: number
+      if (node.type === 'basic') {
+        p = Math.min(1, Math.max(0, Number(node.data.probability ?? 0)))
+      } else if (kids.length === 0) {
+        p = 0
+      } else {
+        const cps = kids.map(k => evalNode(k, new Set(seen)))
+        switch (node.type) {
+          case 'and':
+          case 'pand':
+            p = cps.reduce((a, b) => a * b, 1)
+            break
+          case 'or':
+            p = 1 - cps.reduce((a, b) => a * (1 - b), 1)
+            break
+          case 'vote': {
+            const k = Number(node.data.k ?? 2)
+            // exact for equal probs is hard; use OR-style upper bound estimate
+            p = 1 - cps.reduce((a, b) => a * (1 - b), 1)
+            void k
+            break
+          }
+          case 'xor':
+            p = cps.reduce((acc, pi, i) => acc + pi * cps.reduce((a, pj, j) => j === i ? a : a * (1 - pj), 1), 0)
+            break
+          case 'not':
+            p = 1 - cps[0]
+            break
+          case 'transfer':
+            p = cps[0]
+            break
+          default:
+            p = 1 - cps.reduce((a, b) => a * (1 - b), 1)
+        }
+      }
+      p = Math.min(1, Math.max(0, p))
+      memo.set(id, p)
+      return p
+    }
+
+    // Root = node without parent.
+    const hasParent = new Set<string>()
+    edges.forEach(e => hasParent.add(e.target))
+    const roots = graphNodes.filter(n => !hasParent.has(n.id)).map(n => n.id)
+    roots.forEach(r => evalNode(r, new Set()))
+    // Ensure all nodes evaluated.
+    graphNodes.forEach(n => evalNode(n.id, new Set()))
+    // Root gets the authoritative top-event probability.
+    if (roots.length === 1) memo.set(roots[0], res.top_event_probability)
+
+    setNodes(nds => nds.map(n => ({
+      ...n, data: { ...n.data, computedP: memo.get(n.id) },
+    })))
   }
 
   const downloadMCS = () => {
@@ -483,10 +682,11 @@ export default function FaultTreePage() {
 
   return (
     <div className="flex flex-col h-[calc(100vh-57px)]">
-      <FolioBar api={folios} />
+      {/* #9 Folio bar doubles as the fault-tree list / hierarchy sidebar. */}
+      <FolioBar api={folios} label="Tree" />
       <div className="flex flex-1 overflow-hidden">
       {/* Left toolbar */}
-      <div className="w-56 flex-shrink-0 bg-white border-r border-gray-200 p-3 flex flex-col gap-2">
+      <div className="w-56 flex-shrink-0 bg-white border-r border-gray-200 p-3 flex flex-col gap-2 overflow-y-auto">
         <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Add Node</p>
 
         {([
@@ -528,14 +728,22 @@ export default function FaultTreePage() {
             <Copy size={12} /> Copy
           </button>
           <button
-            onClick={pasteAsMirror}
+            onClick={pasteAsCopy}
             disabled={!clipboard}
-            className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 text-xs text-amber-700 border border-amber-300 rounded hover:bg-amber-50 disabled:opacity-40 transition-colors"
-            title="Paste as mirror/repeated event"
+            className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 text-xs text-gray-700 border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-40 transition-colors"
+            title="Paste as a NEW independent event"
           >
-            <Clipboard size={12} /> Mirror
+            <Clipboard size={12} /> Paste
           </button>
         </div>
+        <button
+          onClick={pasteAsMirror}
+          disabled={!clipboard}
+          className="flex items-center justify-center gap-1 px-2 py-1.5 text-xs text-amber-700 border border-amber-300 rounded hover:bg-amber-50 disabled:opacity-40 transition-colors"
+          title="Mirror: a repeated reference to the SAME event (shared identity)"
+        >
+          <GitFork size={12} /> Mirror (repeated event)
+        </button>
 
         <button
           onClick={autoLayout}
@@ -569,6 +777,34 @@ export default function FaultTreePage() {
                 className="w-full text-xs border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400 resize-none"
               />
             </div>
+
+            {/* #9 Transfer gate target selector */}
+            {selectedNode.type === 'transfer' && (
+              <div>
+                <label className="text-xs text-gray-500 block mb-0.5"
+                  title="Reference another fault tree (folio). Its top event is substituted into this branch when analyzing.">
+                  Referenced tree
+                </label>
+                <select
+                  value={String(selectedNode.data.transferTo ?? '')}
+                  onChange={e => {
+                    const id = e.target.value
+                    const name = transferTargets.find(t => t.id === id)?.name ?? ''
+                    updateDataMulti({ transferTo: id || undefined, transferToName: name || undefined })
+                  }}
+                  className="w-full text-xs border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                >
+                  <option value="">— select tree —</option>
+                  {transferTargets.map(t => (
+                    <option key={t.id} value={t.id}>{t.name}</option>
+                  ))}
+                </select>
+                {transferTargets.length === 0 && (
+                  <p className="text-[10px] text-gray-400 mt-0.5">Create another tree (New) to reference it.</p>
+                )}
+              </div>
+            )}
+
             {selectedNode.type === 'basic' && (() => {
               const dist = String(selectedNode.data.distribution ?? '')
               const distParams = (selectedNode.data.dist_params ?? {}) as Record<string, number>
@@ -576,68 +812,136 @@ export default function FaultTreePage() {
               const hasOverride = selectedNode.data.exposure_time != null
               const overrideVal = hasOverride ? Number(selectedNode.data.exposure_time) : NaN
               const effectiveT = hasOverride ? overrideVal : globalT
+              const source: EventSource = selectedNode.data.ldaFolioId
+                ? 'lda' : (dist ? 'distribution' : 'manual')
               const computedProb = dist ? computeCDF(dist, distParams, effectiveT) : null
               return (
                 <>
+                  {/* #4 Source toggle */}
                   <div>
-                    <label className="text-xs text-gray-500 block mb-0.5"
-                      title="Choose 'Manual' to type the event probability directly, or pick a life distribution and enter its parameters + an exposure time τ — the event probability is then CDF(τ).">
-                      Failure model
-                    </label>
-                    <select
-                      value={dist}
-                      onChange={e => {
-                        const d = e.target.value
-                        if (d && DIST_PARAMS[d]) {
-                          const defaults: Record<string, number> = {}
-                          DIST_PARAMS[d].forEach(p => { defaults[p.key] = p.default })
-                          const prob = computeCDF(d, defaults, effectiveT)
-                          updateDataMulti({ distribution: d, dist_params: defaults, probability: Math.min(1, Math.max(0, prob)) })
-                        } else {
-                          updateDataMulti({ distribution: undefined, dist_params: undefined })
-                        }
-                      }}
-                      className="w-full text-xs border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400"
-                    >
-                      {DIST_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                    </select>
+                    <label className="text-xs text-gray-500 block mb-0.5">Probability source</label>
+                    <div className="grid grid-cols-3 gap-1">
+                      {([
+                        { v: 'manual', l: 'Manual' },
+                        { v: 'distribution', l: 'Dist.' },
+                        { v: 'lda', l: 'LDA' },
+                      ] as const).map(opt => (
+                        <button
+                          key={opt.v}
+                          onClick={() => {
+                            if (opt.v === 'manual') {
+                              updateDataMulti({ distribution: undefined, dist_params: undefined,
+                                ldaFolioId: undefined, ldaFolioName: undefined })
+                            } else if (opt.v === 'distribution') {
+                              const d = dist && DIST_PARAMS[dist] ? dist : 'weibull'
+                              const defaults: Record<string, number> = {}
+                              DIST_PARAMS[d].forEach(p => { defaults[p.key] = p.default })
+                              const prob = computeCDF(d, defaults, effectiveT)
+                              updateDataMulti({ distribution: d, dist_params: defaults,
+                                ldaFolioId: undefined, ldaFolioName: undefined,
+                                probability: Math.min(1, Math.max(0, prob)) })
+                            } else {
+                              // switch to LDA mode (params chosen via dropdown below)
+                              updateDataMulti({ ldaFolioId: selectedNode.data.ldaFolioId ?? '' })
+                            }
+                          }}
+                          className={`text-[10px] py-1 rounded border transition-colors ${
+                            source === opt.v
+                              ? 'bg-blue-600 text-white border-blue-600'
+                              : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
+                          }`}
+                        >{opt.l}</button>
+                      ))}
+                    </div>
                   </div>
-                  {dist && DIST_PARAMS[dist] ? (
+
+                  {/* #4 LDA folio dropdown */}
+                  {source === 'lda' && (
+                    <div>
+                      <label className="text-xs text-gray-500 block mb-0.5">LDA folio (fitted distribution)</label>
+                      <select
+                        value={String(selectedNode.data.ldaFolioId ?? '')}
+                        onChange={e => {
+                          const src = ldaFolios.find(f => f.id === e.target.value)
+                          if (!src) { updateDataMulti({ ldaFolioId: '', ldaFolioName: undefined }); return }
+                          const prob = computeCDF(src.dist, src.dist_params, effectiveT)
+                          updateDataMulti({
+                            ldaFolioId: src.id, ldaFolioName: src.name,
+                            distribution: src.dist, dist_params: src.dist_params,
+                            probability: Math.min(1, Math.max(0, prob)),
+                          })
+                        }}
+                        className="w-full text-xs border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                      >
+                        <option value="">— select folio —</option>
+                        {ldaFolios.map(f => (
+                          <option key={f.id} value={f.id}>{f.name} — {f.label}</option>
+                        ))}
+                      </select>
+                      {ldaFolios.length === 0 && (
+                        <p className="text-[10px] text-gray-400 mt-0.5">No fitted Life-Data folios available.</p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Distribution params (manual distribution mode) */}
+                  {source === 'distribution' && dist && DIST_PARAMS[dist] && (
                     <>
+                      <div>
+                        <label className="text-xs text-gray-500 block mb-0.5">Distribution</label>
+                        <select
+                          value={dist}
+                          onChange={e => {
+                            const d = e.target.value
+                            const defaults: Record<string, number> = {}
+                            DIST_PARAMS[d].forEach(p => { defaults[p.key] = p.default })
+                            const prob = computeCDF(d, defaults, effectiveT)
+                            updateDataMulti({ distribution: d, dist_params: defaults, probability: Math.min(1, Math.max(0, prob)) })
+                          }}
+                          className="w-full text-xs border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                        >
+                          {DIST_OPTIONS.filter(o => o.value).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                        </select>
+                      </div>
                       {DIST_PARAMS[dist].map(p => (
                         <div key={p.key}>
                           <label className="text-xs text-gray-500 block mb-0.5">{p.label}</label>
-                          <input
-                            type="number" step="any"
+                          <NumberField
                             value={distParams[p.key] ?? p.default}
-                            onChange={e => {
-                              const newParams = { ...distParams, [p.key]: parseFloat(e.target.value) || 0 }
+                            onChange={v => {
+                              const newParams = { ...distParams, [p.key]: parseFloat(v) || 0 }
                               const prob = computeCDF(dist, newParams, effectiveT)
                               updateDataMulti({ dist_params: newParams, probability: Math.min(1, Math.max(0, prob)) })
                             }}
-                            className="w-full text-xs border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                            className="w-full"
                           />
                         </div>
                       ))}
+                    </>
+                  )}
+
+                  {/* Exposure-time override (any distribution-driven source) */}
+                  {(source === 'distribution' || source === 'lda') && dist && DIST_PARAMS[dist] && (
+                    <>
                       <div>
                         <label className="text-xs text-gray-500 block mb-0.5">
                           Exposure time (τ) <span className="text-gray-400">— blank = global</span>
                         </label>
-                        <input
-                          type="number" step="any" min="0"
+                        <NumberField
                           value={hasOverride ? overrideVal : ''}
+                          min={0}
                           placeholder={`Global: ${globalT}`}
-                          onChange={e => {
-                            if (e.target.value.trim() === '') {
+                          onChange={v => {
+                            if (v.trim() === '') {
                               const prob = computeCDF(dist, distParams, globalT)
                               updateDataMulti({ exposure_time: undefined, probability: Math.min(1, Math.max(0, prob)) })
                             } else {
-                              const t = parseFloat(e.target.value) || 0
+                              const t = parseFloat(v) || 0
                               const prob = computeCDF(dist, distParams, t)
                               updateDataMulti({ exposure_time: t, probability: Math.min(1, Math.max(0, prob)) })
                             }
                           }}
-                          className="w-full text-xs border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                          className="w-full"
                         />
                         <p className="text-[10px] text-gray-400 mt-0.5">
                           {hasOverride ? `Override τ = ${overrideVal}` : `Using global t = ${globalT}`}
@@ -650,17 +954,20 @@ export default function FaultTreePage() {
                         </span>
                       </div>
                     </>
-                  ) : (
+                  )}
+
+                  {/* Manual probability */}
+                  {source === 'manual' && (
                     <div>
                       <label className="text-xs text-gray-500 block mb-0.5"
-                        title="Probability (0–1) that this basic event occurs. Combined up the tree through the AND/OR/VOTE gates to give the top-event probability.">
+                        title="Probability (0–1) that this basic event occurs.">
                         Probability
                       </label>
-                      <input
-                        type="number" min="0" max="1" step="0.001"
+                      <NumberField
                         value={String(selectedNode.data.probability ?? 0.01)}
-                        onChange={e => updateData('probability', parseFloat(e.target.value))}
-                        className="w-full text-xs border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                        min={0} max={1} step={0.001}
+                        onChange={v => updateData('probability', parseFloat(v))}
+                        className="w-full"
                       />
                     </div>
                   )}
@@ -670,13 +977,19 @@ export default function FaultTreePage() {
             {selectedNode.type === 'vote' && (
               <div>
                 <label className="text-xs text-gray-500 block mb-0.5">k (votes required)</label>
-                <input
-                  type="number" min="1" step="1"
+                <NumberField
                   value={String(selectedNode.data.k ?? 2)}
-                  onChange={e => updateData('k', parseInt(e.target.value))}
-                  className="w-full text-xs border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                  min={1} step={1}
+                  onChange={v => updateData('k', parseInt(v) || 1)}
+                  className="w-full"
                 />
               </div>
+            )}
+            {selectedNode.data.eventKey != null && selectedNode.type === 'basic' && (
+              <p className="text-[10px] text-gray-400">
+                Event key: <span className="font-mono">{String(selectedNode.data.eventKey)}</span>
+                {selectedNode.data.mirror ? ' (repeated)' : ''}
+              </p>
             )}
             {selectedNode.data.linkedTo != null && (
               <p className="text-[10px] text-gray-400">
@@ -705,20 +1018,36 @@ export default function FaultTreePage() {
             <label className="text-[11px] font-medium text-gray-600 block mb-0.5">
               Global exposure time (t)
             </label>
-            <input
-              type="number" step="any" min="0"
+            <NumberField
               value={globalExposure}
-              onChange={e => setGlobalExposure(e.target.value)}
-              className="w-full text-xs border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400"
+              min={0}
+              onChange={v => setGlobalExposure(v)}
+              className="w-full"
               placeholder="e.g. 1000"
             />
             <p className="text-[10px] text-gray-400 mt-0.5 leading-tight">
               Distribution-based events use this time unless they set their own τ override.
             </p>
           </div>
-          <p className="text-xs text-gray-400 mb-2 leading-tight">
-            Connect gate → child by dragging from bottom handle to top handle.
-          </p>
+
+          {/* #7 Calculation methods */}
+          <div className="mb-2 border-t border-gray-100 pt-2">
+            <label className="text-[11px] font-medium text-gray-600 block mb-1">Calculation methods</label>
+            <div className="flex flex-col gap-1">
+              {METHOD_OPTIONS.map(m => (
+                <label key={m.id} className="flex items-start gap-1.5 text-[10px] text-gray-600 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={methods.includes(m.id)}
+                    onChange={() => toggleMethod(m.id)}
+                    className="mt-0.5"
+                  />
+                  <span className="leading-tight">{m.label}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+
           {error && <p className="text-xs text-red-600 bg-red-50 p-2 rounded mb-2">{error}</p>}
           <button
             onClick={analyze}
@@ -733,7 +1062,11 @@ export default function FaultTreePage() {
 
       {/* Canvas */}
       <CanvasErrorBoundary onReset={autoLayout}>
-        <div className="flex-1 relative">
+        <div className="flex-1 relative" ref={flowWrapperRef}>
+          {/* #19 Export diagram */}
+          <div className="absolute top-3 right-3 z-10">
+            <ExportDiagramButton getElement={() => flowWrapperRef.current} baseName="fault-tree" />
+          </div>
           {result && (
             <div className="absolute top-3 left-1/2 -translate-x-1/2 z-10 bg-white/90 backdrop-blur border border-red-200 rounded-lg shadow-lg px-4 py-2 flex items-center gap-3">
               <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Top Event</span>
@@ -761,7 +1094,7 @@ export default function FaultTreePage() {
 
       {/* Results panel */}
       {result && (
-        <div className="w-72 flex-shrink-0 bg-white border-l border-gray-200 flex flex-col overflow-hidden">
+        <div className="w-80 flex-shrink-0 bg-white border-l border-gray-200 flex flex-col overflow-hidden">
           <div className="p-3 border-b border-gray-100">
             <p className="text-xs text-gray-500">Top Event Probability</p>
             <p className="text-2xl font-bold text-red-600">
@@ -769,15 +1102,17 @@ export default function FaultTreePage() {
             </p>
           </div>
 
-          <div className="flex border-b border-gray-100">
+          <div className="flex border-b border-gray-100 text-[11px]">
             {([
               { id: 'mcs', label: `MCS (${result.minimal_cut_sets.length})` },
-              { id: 'importance', label: 'Importance' },
+              { id: 'methods', label: 'Methods' },
+              { id: 'formulas', label: 'Formulas' },
+              { id: 'importance', label: 'Import.' },
             ] as const).map(t => (
               <button
                 key={t.id}
                 onClick={() => setResultTab(t.id)}
-                className={`flex-1 py-2 text-xs font-medium border-b-2 transition-colors ${
+                className={`flex-1 py-2 font-medium border-b-2 transition-colors ${
                   resultTab === t.id ? 'border-blue-600 text-blue-700' : 'border-transparent text-gray-500'
                 }`}
               >{t.label}</button>
@@ -804,6 +1139,68 @@ export default function FaultTreePage() {
                 ))}
               </div>
             )}
+
+            {/* #7 Methods comparison */}
+            {resultTab === 'methods' && (
+              <div className="flex flex-col gap-2">
+                <p className="text-[10px] text-gray-400">Top-event probability by method.</p>
+                {result.methods && Object.keys(result.methods).length > 0 ? (
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="text-gray-500 border-b border-gray-200">
+                        <th className="text-left py-1 font-medium">Method</th>
+                        <th className="text-right py-1 font-medium">P(TOP)</th>
+                      </tr>
+                    </thead>
+                    <tbody className="font-mono">
+                      {Object.entries(result.methods).map(([m, v]) => (
+                        <tr key={m} className="border-b border-gray-100">
+                          <td className="py-1 font-sans text-gray-700">{METHOD_LABELS[m] ?? m}</td>
+                          <td className="py-1 text-right">{v != null ? v.toExponential(5) : '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : (
+                  <p className="text-xs text-gray-400">No method results.</p>
+                )}
+              </div>
+            )}
+
+            {/* #6 Formulas */}
+            {resultTab === 'formulas' && (
+              <div className="flex flex-col gap-3">
+                {result.formulas ? (
+                  <>
+                    <div>
+                      <p className="text-[10px] font-semibold text-gray-500 uppercase mb-1">Boolean structure</p>
+                      <p className="text-xs font-mono bg-gray-50 rounded p-2 break-words">{result.formulas.boolean_expression}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-semibold text-gray-500 uppercase mb-1">Top-event probability</p>
+                      <p className="text-[11px] font-mono bg-gray-50 rounded p-2 break-words">{result.formulas.probability_expression}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-semibold text-gray-500 uppercase mb-1">Minimal cut sets</p>
+                      <div className="flex flex-col gap-1">
+                        {result.formulas.cut_sets.map((cs, i) => (
+                          <div key={i} className="text-[11px] bg-gray-50 rounded px-2 py-1">
+                            <span className="font-mono text-gray-700">{cs.formula}</span>
+                            <span className="text-gray-400"> = </span>
+                            <span className="font-mono font-semibold text-blue-700">
+                              {cs.value != null ? cs.value.toExponential(3) : '—'}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-xs text-gray-400">No formulas returned.</p>
+                )}
+              </div>
+            )}
+
             {resultTab === 'importance' && (
               <ResultsTable
                 columns={importanceCols}

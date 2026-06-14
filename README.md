@@ -206,5 +206,9 @@ and contact details.
 
 Perdura uses resources from the open-source
 [reliability](https://reliability.readthedocs.io/) Python library by Matthew
-Reid (MIT License): Reid, M. (2022). *Journal of Open Source Software*, 7(76),
-4619. [doi:10.21105/joss.04619](https://doi.org/10.21105/joss.04619)
+Reid (MIT License):
+
+> Reid, M. (2022). *Reliability – a Python library for reliability engineering*
+> (Version 0.8.2) [Python]. Available from
+> <https://pypi.org/project/reliability/>.
+> [doi:10.5281/zenodo.3938000](https://doi.org/10.5281/zenodo.3938000)

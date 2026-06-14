@@ -55,6 +55,18 @@ class CompareRequest(BaseModel):
     CI: float = 0.95
 
 
+class SpecialModelRequest(BaseModel):
+    """Fit a special Weibull model (mixture, competing risks, DSZI, grouped)."""
+    # 'mixture' | 'competing_risks' | 'dszi' | 'ds' | 'zi' | 'grouped'
+    model: str
+    failures: list[float]
+    right_censored: Optional[list[float]] = None
+    # Grouped data: per-time quantities (parallel to failures/right_censored)
+    failure_quantities: Optional[list[float]] = None
+    right_censored_quantities: Optional[list[float]] = None
+    CI: float = 0.95
+
+
 # --- ALT ---
 
 class ALTFitRequest(BaseModel):
@@ -65,6 +77,58 @@ class ALTFitRequest(BaseModel):
     use_level_stress: Optional[float] = None
     models_to_fit: Optional[list[str]] = None
     sort_by: str = "AICc"
+
+
+class OneSampleProportionRequest(BaseModel):
+    trials: int
+    successes: int
+    CI: float = 0.95
+
+
+class TwoProportionRequest(BaseModel):
+    trials_1: int
+    successes_1: int
+    trials_2: int
+    successes_2: int
+    CI: float = 0.95
+
+
+class NoFailuresRequest(BaseModel):
+    reliability: float
+    CI: float = 0.95
+    lifetimes: float = 1.0
+    weibull_shape: float = 1.0
+
+
+class SequentialSamplingRequest(BaseModel):
+    p1: float
+    p2: float
+    alpha: float = 0.05
+    beta: float = 0.10
+    max_samples: int = 100
+
+
+class TestPlannerRequest(BaseModel):
+    MTBF: Optional[float] = None
+    test_duration: Optional[float] = None
+    number_of_failures: Optional[int] = None
+    CI: float = 0.90
+    two_sided: bool = False
+
+
+class TestDurationRequest(BaseModel):
+    MTBF_required: float
+    MTBF_design: float
+    consumer_risk: float = 0.10
+    producer_risk: float = 0.10
+
+
+class GoodnessOfFitRequest(BaseModel):
+    """Chi-squared / KS goodness-of-fit test against a fitted distribution."""
+    failures: list[float]
+    distribution: str = "Weibull_2P"
+    test: str = "chi_squared"  # or "ks"
+    CI: float = 0.95
 
 
 class SampleSizeRequest(BaseModel):
@@ -87,6 +151,30 @@ class GrowthRequest(BaseModel):
     times: list[float]
     T: Optional[float] = None  # total test time (None = failure terminated)
     model: str = "crow_amsaa"  # or "duane"
+
+
+class OptimalReplacementRequest(BaseModel):
+    """Optimal preventive-maintenance interval (cost model)."""
+    cost_PM: float
+    cost_CM: float
+    weibull_alpha: float
+    weibull_beta: float
+    q: int = 0  # 0 = as good as new (renewal); 1 = as good as old (minimal repair)
+
+
+class ROCOFRequest(BaseModel):
+    """Rate of occurrence of failures + Laplace trend test."""
+    times_between_failures: Optional[list[float]] = None
+    failure_times: Optional[list[float]] = None
+    test_end: Optional[float] = None
+    CI: float = 0.95
+
+
+class MCFRequest(BaseModel):
+    """Mean Cumulative Function for recurrent events across systems."""
+    data: list[list[float]]      # one list of event times per system
+    CI: float = 0.95
+    parametric: bool = False     # also fit the power-law parametric MCF
 
 
 # --- Failure Rate Prediction (MIL-HDBK-217F / VITA 51.1) ---

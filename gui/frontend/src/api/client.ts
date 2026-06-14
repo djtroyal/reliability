@@ -173,6 +173,70 @@ export interface CompareResponse {
 export const compareFolios = (req: CompareRequest) =>
   api.post<CompareResponse>('/life-data/compare', req).then(r => r.data)
 
+// Special Weibull models (mixture / competing risks / DSZI / grouped)
+export interface SpecialModelRequest {
+  model: string
+  failures: number[]
+  right_censored?: number[] | null
+  failure_quantities?: number[] | null
+  right_censored_quantities?: number[] | null
+  CI?: number
+}
+export interface SpecialModelResponse {
+  model: string
+  params: { name: string; value: number }[]
+  loglik: number | null
+  AICc: number | null
+  BIC: number | null
+  curves: { x: number[]; sf?: number[]; cdf?: number[]; pdf?: number[] }
+}
+export const fitSpecialModel = (req: SpecialModelRequest) =>
+  api.post<SpecialModelResponse>('/life-data/special', req).then(r => r.data)
+
+// --- Reliability Testing tools ---
+
+export const oneSampleProportion = (req: { trials: number; successes: number; CI?: number }) =>
+  api.post<{ proportion: number; lower: number; upper: number; trials: number; successes: number; CI: number }>(
+    '/alt/one-sample-proportion', req).then(r => r.data)
+
+export const twoProportionTest = (req: {
+  trials_1: number; successes_1: number; trials_2: number; successes_2: number; CI?: number
+}) => api.post<{ p1: number; p2: number; difference: number; z: number; p_value: number; different: boolean; CI: number }>(
+  '/alt/two-proportion-test', req).then(r => r.data)
+
+export const sampleSizeNoFailures = (req: {
+  reliability: number; CI?: number; lifetimes?: number; weibull_shape?: number
+}) => api.post<{ n: number; reliability: number; CI: number; lifetimes: number; weibull_shape: number }>(
+  '/alt/sample-size-no-failures', req).then(r => r.data)
+
+export interface SequentialSamplingResponse {
+  n: number[]; acceptance_line: (number | null)[]; rejection_line: number[]
+  slope: number; intercept_accept: number; intercept_reject: number
+}
+export const sequentialSampling = (req: {
+  p1: number; p2: number; alpha?: number; beta?: number; max_samples?: number
+}) => api.post<SequentialSamplingResponse>('/alt/sequential-sampling', req).then(r => r.data)
+
+export const testPlanner = (req: {
+  MTBF?: number | null; test_duration?: number | null; number_of_failures?: number | null
+  CI?: number; two_sided?: boolean
+}) => api.post<{ MTBF: number; test_duration: number; number_of_failures: number; CI: number }>(
+  '/alt/test-planner', req).then(r => r.data)
+
+export const testDuration = (req: {
+  MTBF_required: number; MTBF_design: number; consumer_risk?: number; producer_risk?: number
+}) => api.post<{ test_duration: number; number_of_failures: number; MTBF_required: number; MTBF_design: number; consumer_risk: number; producer_risk: number }>(
+  '/alt/test-duration', req).then(r => r.data)
+
+export interface GoodnessOfFitResponse {
+  statistic: number; critical_value: number; p_value: number
+  hypothesis: string; CI: number; test: string; distribution: string
+  bins?: number; df?: number
+}
+export const goodnessOfFit = (req: {
+  failures: number[]; distribution?: string; test?: string; CI?: number
+}) => api.post<GoodnessOfFitResponse>('/alt/goodness-of-fit', req).then(r => r.data)
+
 // --- ALT ---
 
 export interface ALTFitRequest {
@@ -521,6 +585,54 @@ export interface GrowthResponse {
 
 export const fitGrowth = (req: GrowthRequest) =>
   api.post<GrowthResponse>('/growth/fit', req).then(r => r.data)
+
+// Optimal replacement time
+export interface OptimalReplacementResponse {
+  optimal_replacement_time: number
+  min_cost: number
+  cost_PM_per_unit_time: number
+  time: number[]
+  cost: (number | null)[]
+  q: number
+}
+export const optimalReplacementTime = (req: {
+  cost_PM: number; cost_CM: number; weibull_alpha: number; weibull_beta: number; q: number
+}) => api.post<OptimalReplacementResponse>('/growth/optimal-replacement', req).then(r => r.data)
+
+// ROCOF (rate of occurrence of failures) + Laplace trend test
+export interface ROCOFResponse {
+  U: number
+  z_crit: number
+  p_value: number
+  CI: number
+  n_failures: number
+  test_end: number
+  failure_terminated: boolean
+  trend: string
+  ROCOF: number | null
+  Lambda_hat: number | null
+  Beta_hat: number | null
+}
+export const computeROCOF = (req: {
+  times_between_failures?: number[] | null
+  failure_times?: number[] | null
+  test_end?: number | null
+  CI?: number
+}) => api.post<ROCOFResponse>('/growth/rocof', req).then(r => r.data)
+
+// Mean Cumulative Function
+export interface MCFResponse {
+  nonparametric: {
+    time: number[]; MCF: number[]; MCF_lower: number[]; MCF_upper: number[]
+    variance: number[]; CI: number
+  }
+  parametric: {
+    alpha: number; beta: number; r_squared: number
+    time: number[]; MCF: number[]; CI: number
+  } | null
+}
+export const computeMCF = (req: { data: number[][]; CI?: number; parametric?: boolean }) =>
+  api.post<MCFResponse>('/growth/mcf', req).then(r => r.data)
 
 // --- Warranty Analysis ---
 

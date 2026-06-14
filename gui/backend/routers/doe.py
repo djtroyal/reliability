@@ -29,7 +29,7 @@ from reliability.DOE import (
     randomize_runs,
 )
 
-router = APIRouter(prefix="/doe", tags=["doe"])
+router = APIRouter()
 
 
 # ---------------------------------------------------------------------------

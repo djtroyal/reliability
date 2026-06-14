@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import {
   LineChart, Thermometer, Network, GitFork, Cpu, Atom, TrendingUp, ShieldCheck,
-  BarChart3, FlaskConical, ScatterChart, Beaker, Gauge,
+  BarChart3, FlaskConical, ScatterChart, Target,
 } from 'lucide-react'
 import LifeData from './components/LifeData'
 import ALT from './components/ALT'
@@ -14,15 +14,14 @@ import Warranty from './components/Warranty'
 import Descriptive from './components/Descriptive'
 import Hypothesis from './components/Hypothesis'
 import Regression from './components/Regression'
-import DOE from './components/DOE'
-import MSA from './components/MSA'
+import SixSigma from './components/SixSigma'
 import ProjectBar from './components/shared/ProjectBar'
 import Logo from './components/shared/Logo'
 import { ErrorBoundary } from './components/shared/ErrorBoundary'
 
 type Tab =
   | 'life-data' | 'alt' | 'system' | 'fault-tree' | 'prediction' | 'pof' | 'growth' | 'warranty'
-  | 'descriptive' | 'hypothesis' | 'regression' | 'doe' | 'msa'
+  | 'descriptive' | 'hypothesis' | 'regression' | 'six-sigma'
 
 const tabs: { id: Tab; label: string; moduleKey: string; icon: typeof LineChart; color: string }[] = [
   { id: 'life-data', label: 'Life Data Analysis', moduleKey: 'lifeData', icon: LineChart, color: 'text-blue-500' },
@@ -36,8 +35,7 @@ const tabs: { id: Tab; label: string; moduleKey: string; icon: typeof LineChart;
   { id: 'descriptive', label: 'Descriptive Statistics', moduleKey: 'descriptive', icon: BarChart3, color: 'text-sky-500' },
   { id: 'hypothesis', label: 'Hypothesis Tests', moduleKey: 'hypothesis', icon: FlaskConical, color: 'text-fuchsia-500' },
   { id: 'regression', label: 'Regression', moduleKey: 'regression', icon: ScatterChart, color: 'text-orange-500' },
-  { id: 'doe', label: 'DOE', moduleKey: 'doe', icon: Beaker, color: 'text-lime-500' },
-  { id: 'msa', label: 'MSA', moduleKey: 'msa', icon: Gauge, color: 'text-teal-500' },
+  { id: 'six-sigma', label: 'Six Sigma', moduleKey: 'sixSigma', icon: Target, color: 'text-teal-500' },
 ]
 
 export default function App() {
@@ -94,8 +92,7 @@ export default function App() {
           {active === 'descriptive' && <Descriptive />}
           {active === 'hypothesis' && <Hypothesis />}
           {active === 'regression' && <Regression />}
-          {active === 'doe' && <DOE />}
-          {active === 'msa' && <MSA />}
+          {active === 'six-sigma' && <SixSigma />}
         </ErrorBoundary>
       </main>
 

@@ -23,7 +23,7 @@ from reliability.Regression import (
     polynomial_regression,
 )
 
-router = APIRouter(prefix="/api/regression", tags=["Regression"])
+router = APIRouter()
 
 
 # ---------------------------------------------------------------------------

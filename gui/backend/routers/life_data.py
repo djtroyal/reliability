@@ -30,7 +30,7 @@ from reliability.Special_models import (
 from schemas import (
     LifeDataFitRequest, NonparametricRequest,
     GenerateRequest, SpecCurvesRequest, CompareRequest, EvaluateRequest,
-    StressStrengthRequest, SpecialModelRequest, CalculatorRequest,
+    StressStrengthRequest, SpecialModelRequest, CalculatorRequest, WeibayesRequest,
 )
 
 # distribution name -> (Distribution class, ordered parameter names)
@@ -671,4 +671,63 @@ def fit_special_model(req: SpecialModelRequest):
         "AICc": _safe(getattr(fit, "AICc", None), 4),
         "BIC": _safe(getattr(fit, "BIC", None), 4),
         "curves": curves,
+    }
+
+
+@router.post("/weibayes")
+def weibayes(req: WeibayesRequest):
+    """Weibayes fit: given a fixed beta, compute MLE of eta (and CI bounds).
+
+    Supports both the standard case (r >= 1 failures) and the zero-failure
+    case (r == 0), where a conservative lower bound on eta is returned instead.
+    """
+    from reliability.Bayesian import weibayes_fit
+
+    failures = req.failures or []
+    rc = req.right_censored or []
+    if req.beta <= 0:
+        raise HTTPException(status_code=400, detail="beta must be > 0.")
+    if not (0 < req.CI < 1):
+        raise HTTPException(status_code=400, detail="CI must be between 0 and 1.")
+
+    all_times = [float(t) for t in failures] + [float(t) for t in rc]
+    all_states = ['F'] * len(failures) + ['S'] * len(rc)
+
+    if not all_times:
+        raise HTTPException(status_code=400, detail="At least one time value required.")
+    if any(t <= 0 for t in all_times):
+        raise HTTPException(status_code=400, detail="All times must be > 0.")
+
+    try:
+        result = weibayes_fit(all_times, all_states, beta=req.beta, CI=req.CI)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    def _safe_list(lst):
+        if lst is None:
+            return None
+        return [_safe(v, 6) if v is not None else None for v in lst]
+
+    curves = result.get("curves", {})
+    return {
+        "beta": _safe(result["beta"], 6),
+        "eta": _safe(result["eta"], 6),
+        "eta_lower": _safe(result["eta_lower"], 6),
+        "eta_upper": _safe(result["eta_upper"], 6),
+        "r": result["r"],
+        "n_total": len(all_times),
+        "sum_tb": _safe(result["sum_tb"], 6),
+        "CI": req.CI,
+        "zero_failure": result["zero_failure"],
+        "curves": {
+            "x": _safe_list(curves.get("x")),
+            "sf": _safe_list(curves.get("sf")),
+            "cdf": _safe_list(curves.get("cdf")),
+            "pdf": _safe_list(curves.get("pdf")),
+            "hf": _safe_list(curves.get("hf")),
+            "sf_lower": _safe_list(curves.get("sf_lower")),
+            "sf_upper": _safe_list(curves.get("sf_upper")),
+        },
     }

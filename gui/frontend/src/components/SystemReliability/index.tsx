@@ -25,6 +25,7 @@ import LibraryPanel, { LibraryItem } from '../shared/LibraryPanel'
 import { computeCDF, DIST_OPTIONS, DIST_PARAMS } from '../FaultTree'
 import { useLdaFolios } from '../shared/ldaFolios'
 import ExportDiagramButton from '../shared/ExportDiagramButton'
+import ExportResultsButton from '../shared/ExportResultsButton'
 
 // --- Custom node components ---
 
@@ -94,6 +95,7 @@ export default function SystemReliability() {
   latest.current = { nodes, edges }
   const persistTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const flowWrapperRef = useRef<HTMLDivElement>(null)
+  const resultsRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (persistTimer.current) clearTimeout(persistTimer.current)
     persistTimer.current = setTimeout(() => setPersisted(latest.current), 250)
@@ -475,8 +477,11 @@ export default function SystemReliability() {
 
       {/* Results panel */}
       {result && (
-        <div className="w-64 flex-shrink-0 bg-white border-l border-gray-200 p-4 overflow-y-auto">
-          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Results</p>
+        <div ref={resultsRef} className="w-64 flex-shrink-0 bg-white border-l border-gray-200 p-4 overflow-y-auto">
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Results</p>
+            <ExportResultsButton getElement={() => resultsRef.current} baseName="system-reliability" />
+          </div>
 
           <div className="mb-4 p-3 bg-blue-50 rounded">
             <p className="text-xs text-gray-500">System Reliability</p>

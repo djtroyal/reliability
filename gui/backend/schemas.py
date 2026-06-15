@@ -277,8 +277,10 @@ class FaultTreeRequest(BaseModel):
     # that do not carry their own ``exposure_time`` override.
     exposure_time: Optional[float] = None
     # Calculation methods to report top-event probability for (#7).
-    # Subset of {'exact', 'rare_event', 'min_cut_upper_bound'}.
+    # Subset of {'exact', 'rare_event', 'min_cut_upper_bound', 'simulation'}.
     methods: Optional[list[str]] = None
+    # Number of Monte Carlo samples for the 'simulation' method.
+    n_simulations: Optional[int] = None
     # Other trees referenced by Transfer gates, keyed by tree id (#9).
     trees: Optional[dict[str, FaultTreeGraph]] = None
     # Id of the tree being analyzed (for transfer-gate cycle detection).

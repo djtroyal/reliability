@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import Plot from 'react-plotly.js'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type PlotlyLayout = any
 import { Play } from 'lucide-react'
 import InfoLabel from '../shared/InfoLabel'
+import ExportResultsButton from '../shared/ExportResultsButton'
 import { useModuleState } from '../../store/project'
 import { gageRR, GageRRResponse } from '../../api/msa'
 
@@ -220,6 +221,7 @@ export default function MSA() {
   const [state, setState] = useModuleState<MSAState>('msa', INITIAL_STATE)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const resultsRef = useRef<HTMLDivElement>(null)
 
   const setField = <K extends keyof MSAState>(k: K, v: MSAState[K]) =>
     setState(s => ({ ...s, [k]: v }))
@@ -474,7 +476,10 @@ export default function MSA() {
         )}
 
         {result && (
-          <>
+          <div ref={resultsRef}>
+            <div className="flex justify-end mb-3">
+              <ExportResultsButton getElement={() => resultsRef.current} baseName="msa" />
+            </div>
             {/* Assessment */}
             <GrrVerdict pct={grr?.pct_study_var} />
 
@@ -612,7 +617,7 @@ export default function MSA() {
                 </div>
               </section>
             )}
-          </>
+          </div>
         )}
       </div>
     </div>

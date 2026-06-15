@@ -19,12 +19,13 @@ import '@xyflow/react/dist/style.css'
 import { Plus, Play, Trash2, Download, LayoutGrid, Copy, Clipboard, GitFork } from 'lucide-react'
 import { analyzeFaultTree, FaultTreeResponse, FaultTreeGraph } from '../../api/client'
 import ResultsTable from '../shared/ResultsTable'
-import { useFolioState, useRevision, getProjectState } from '../../store/project'
+import { useFolioState, useRevision, getProjectState, writeFolioState } from '../../store/project'
 import FolioBar from '../shared/FolioBar'
 import LibraryPanel, { LibraryItem } from '../shared/LibraryPanel'
 import { CanvasErrorBoundary, sanitizeNodeChanges, sanitizeNodes } from '../shared/CanvasErrorBoundary'
 import { useLdaFolios } from '../shared/ldaFolios'
 import ExportDiagramButton from '../shared/ExportDiagramButton'
+import ExportResultsButton from '../shared/ExportResultsButton'
 import NumberField from '../shared/NumberField'
 
 // --- Distribution CDF helpers (for computing probability from distributions) ---
@@ -420,16 +421,19 @@ const METHOD_OPTIONS: { id: string; label: string }[] = [
   { id: 'exact', label: 'Exact (inclusion-exclusion over MCS)' },
   { id: 'rare_event', label: 'Rare-event approximation (Σ P(MCS))' },
   { id: 'min_cut_upper_bound', label: 'Min-cut upper bound (1 − Π(1 − P(MCS)))' },
+  { id: 'simulation', label: 'Monte Carlo simulation' },
 ]
 
 const METHOD_LABELS: Record<string, string> = {
   exact: 'Exact',
   rare_event: 'Rare-event',
   min_cut_upper_bound: 'Min-cut UB',
+  simulation: 'Simulation',
 }
 
 interface CanvasState { nodes: Node[]; edges: Edge[]; exposureTime?: string }
 const INITIAL_CANVAS: CanvasState = { nodes: [], edges: [], exposureTime: '1000' }
+const faultTreeKey = 'faultTree'
 
 /** Read every faultTree folio's graph as {tree_id -> graph} for transfer-gate
  *  resolution (#9). Reads the raw module slice directly so all trees (not just
@@ -455,7 +459,7 @@ function collectAllTrees(): { trees: Record<string, FaultTreeGraph>; names: Reco
 }
 
 export default function FaultTreePage() {
-  const [persisted, setPersisted, folios] = useFolioState<CanvasState>('faultTree', INITIAL_CANVAS)
+  const [persisted, , folios] = useFolioState<CanvasState>(faultTreeKey, INITIAL_CANVAS)
   const revision = useRevision()
   const ldaFolios = useLdaFolios()
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>(sanitizeNodes(persisted.nodes ?? []))
@@ -468,8 +472,10 @@ export default function FaultTreePage() {
   const [activeMCS, setActiveMCS] = useState<number | null>(null)
   const [clipboard, setClipboard] = useState<Record<string, unknown> | null>(null)
   const [globalExposure, setGlobalExposure] = useState<string>(persisted.exposureTime ?? '1000')
-  const [methods, setMethods] = useState<string[]>(['exact'])
+  const [method, setMethod] = useState<string>('exact')
+  const [nSimulations, setNSimulations] = useState<string>('10000')
   const flowWrapperRef = useRef<HTMLDivElement>(null)
+  const resultsRef = useRef<HTMLDivElement>(null)
 
   // Other trees (folios) usable as transfer targets (excludes current tree).
   const transferTargets = useMemo(
@@ -477,19 +483,32 @@ export default function FaultTreePage() {
     [folios.folios, folios.activeId],
   )
 
-  // Compute which node IDs should be highlighted based on the selected MCS.
-  // MCS are reported by eventKey; map back to every node carrying that key.
+  // Compute which node IDs should be highlighted:
+  // 1. MCS highlighting: when a cut set is selected, highlight its events.
+  // 2. Mirror highlighting: when a basic event is selected, highlight all
+  //    nodes sharing the same eventKey (auto-mirror siblings).
   const highlightedNodes = useMemo<Set<string>>(() => {
-    if (activeMCS == null || !result) return new Set<string>()
-    const keys = new Set(result.minimal_cut_sets[activeMCS] ?? [])
     const ids = new Set<string>()
-    for (const n of nodes) {
-      if (n.type !== 'basic') continue
-      const key = String(n.data.eventKey ?? n.data.label ?? n.id)
-      if (keys.has(key)) ids.add(n.id)
+    if (activeMCS != null && result) {
+      const keys = new Set(result.minimal_cut_sets[activeMCS] ?? [])
+      for (const n of nodes) {
+        if (n.type !== 'basic') continue
+        const key = String(n.data.eventKey ?? n.data.label ?? n.id)
+        if (keys.has(key)) ids.add(n.id)
+      }
+    }
+    if (selectedNode?.type === 'basic') {
+      const selKey = String(selectedNode.data.eventKey ?? selectedNode.data.label ?? selectedNode.id)
+      const siblings = nodes.filter(n =>
+        n.type === 'basic' && n.id !== selectedNode.id
+        && String(n.data.eventKey ?? n.data.label ?? n.id) === selKey)
+      if (siblings.length > 0) {
+        ids.add(selectedNode.id)
+        siblings.forEach(n => ids.add(n.id))
+      }
     }
     return ids
-  }, [activeMCS, result, nodes])
+  }, [activeMCS, result, nodes, selectedNode])
 
   useEffect(() => {
     setNodes(nds => nds.map(n => {
@@ -499,25 +518,37 @@ export default function FaultTreePage() {
     }))
   }, [highlightedNodes]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Persist canvas to the project store, debounced.
+  // Persist canvas to the project store, debounced. Writes are addressed to the
+  // folio the current canvas belongs to (`ownerFolio`), not whichever folio is
+  // active when the timer fires — so switching folios can never drop or
+  // misplace a pending write.
   const latest = useRef({ nodes, edges, exposureTime: globalExposure })
   latest.current = { nodes, edges, exposureTime: globalExposure }
+  const ownerFolio = useRef(folios.activeId)
   const persistTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   useEffect(() => {
     if (persistTimer.current) clearTimeout(persistTimer.current)
-    persistTimer.current = setTimeout(() => setPersisted(latest.current), 250)
+    persistTimer.current = setTimeout(
+      () => writeFolioState(faultTreeKey, ownerFolio.current, latest.current), 250)
   }, [nodes, edges, globalExposure]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => () => {
     if (persistTimer.current) clearTimeout(persistTimer.current)
-    setPersisted(latest.current)
+    writeFolioState(faultTreeKey, ownerFolio.current, latest.current)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
   const seenRevision = useRef(revision)
   const seenFolio = useRef(folios.activeId)
   useEffect(() => {
     if (revision !== seenRevision.current || folios.activeId !== seenFolio.current) {
+      // Flush the outgoing folio's canvas to *its* slice before loading the new
+      // one (revision changes come from import/new-project, where the in-memory
+      // canvas is already stale, so skip the flush in that case).
+      if (persistTimer.current) clearTimeout(persistTimer.current)
+      if (revision === seenRevision.current && ownerFolio.current !== folios.activeId) {
+        writeFolioState(faultTreeKey, ownerFolio.current, latest.current)
+      }
       seenRevision.current = revision
       seenFolio.current = folios.activeId
-      if (persistTimer.current) clearTimeout(persistTimer.current)
+      ownerFolio.current = folios.activeId
       setNodes(sanitizeNodes(persisted.nodes ?? []))
       setEdges(persisted.edges ?? [])
       setGlobalExposure(persisted.exposureTime ?? '1000')
@@ -678,17 +709,38 @@ export default function FaultTreePage() {
     setSelectedNode(prev => prev ? { ...prev, data: { ...prev.data, ...updates } } : null)
   }
 
+  // Auto-mirror: when a basic event's label matches another basic event,
+  // sync the eventKey so the backend treats them as the same underlying event.
+  const syncMirrorByLabel = useCallback((editedId: string, newLabel: string) => {
+    setNodes(nds => {
+      if (!newLabel.trim()) return nds
+      const match = nds.find(n =>
+        n.type === 'basic' && n.id !== editedId
+        && String(n.data.label ?? '') === newLabel.trim())
+      if (!match) {
+        // No match: ensure this event has its own unique key and is not mirrored
+        return nds.map(n => n.id === editedId
+          ? { ...n, data: { ...n.data, eventKey: n.id, mirror: false } } : n)
+      }
+      const sharedKey = String(match.data.eventKey ?? match.data.label ?? match.id)
+      return nds.map(n => {
+        if (n.id === editedId) {
+          return { ...n, data: { ...n.data, eventKey: sharedKey, mirror: true } }
+        }
+        // Mark the original as well (it may not have been flagged mirror yet)
+        if (n.id === match.id && !n.data.mirror) {
+          return n // original stays non-mirror; it's the "primary"
+        }
+        return n
+      })
+    })
+  }, [setNodes])
+
   const onNodeClick = useCallback((_: React.MouseEvent, node: Node) => {
     setSelectedNode(node)
   }, [])
 
   const onPaneClick = useCallback(() => setSelectedNode(null), [])
-
-  const toggleMethod = (id: string) => {
-    setMethods(prev => prev.includes(id)
-      ? (prev.length > 1 ? prev.filter(m => m !== id) : prev)
-      : [...prev, id])
-  }
 
   const analyze = async () => {
     if (!nodes.length) { setError('Add nodes to the fault tree first.'); return }
@@ -719,7 +771,8 @@ export default function FaultTreePage() {
       trees[folios.activeId] = { nodes: apiNodes, edges: apiEdges }
       const res = await analyzeFaultTree(apiNodes, apiEdges, {
         exposureTime: globalT ?? null,
-        methods,
+        methods: [method],
+        nSimulations: method === 'simulation' ? (parseInt(nSimulations) || 10000) : undefined,
         trees,
         treeId: folios.activeId,
       })
@@ -896,7 +949,10 @@ export default function FaultTreePage() {
               <label className="text-xs text-gray-500 block mb-0.5">Label / ID</label>
               <input
                 value={String(selectedNode.data.label ?? '')}
-                onChange={e => updateData('label', e.target.value)}
+                onChange={e => {
+                  updateData('label', e.target.value)
+                  if (selectedNode.type === 'basic') syncMirrorByLabel(selectedNode.id, e.target.value)
+                }}
                 className="w-full text-xs border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400"
               />
             </div>
@@ -1172,22 +1228,35 @@ export default function FaultTreePage() {
             </p>
           </div>
 
-          {/* #7 Calculation methods */}
+          {/* #7 Calculation method (single select) */}
           <div className="mb-2 border-t border-gray-100 pt-2">
-            <label className="text-[11px] font-medium text-gray-600 block mb-1">Calculation methods</label>
+            <label className="text-[11px] font-medium text-gray-600 block mb-1">Calculation method</label>
             <div className="flex flex-col gap-1">
               {METHOD_OPTIONS.map(m => (
                 <label key={m.id} className="flex items-start gap-1.5 text-[10px] text-gray-600 cursor-pointer">
                   <input
-                    type="checkbox"
-                    checked={methods.includes(m.id)}
-                    onChange={() => toggleMethod(m.id)}
+                    type="radio"
+                    name="fta-method"
+                    checked={method === m.id}
+                    onChange={() => setMethod(m.id)}
                     className="mt-0.5"
                   />
                   <span className="leading-tight">{m.label}</span>
                 </label>
               ))}
             </div>
+            {method === 'simulation' && (
+              <div className="mt-1.5">
+                <label className="text-[10px] text-gray-500 block mb-0.5">Number of simulations</label>
+                <NumberField
+                  value={nSimulations}
+                  min={1000} max={10000000} step={1000}
+                  onChange={v => setNSimulations(v)}
+                  className="w-full"
+                  placeholder="10000"
+                />
+              </div>
+            )}
           </div>
 
           {error && <p className="text-xs text-red-600 bg-red-50 p-2 rounded mb-2">{error}</p>}
@@ -1236,7 +1305,7 @@ export default function FaultTreePage() {
 
       {/* Results panel */}
       {result && (
-        <div className="w-80 flex-shrink-0 bg-white border-l border-gray-200 flex flex-col overflow-hidden">
+        <div ref={resultsRef} className="w-80 flex-shrink-0 bg-white border-l border-gray-200 flex flex-col overflow-hidden">
           <div className="p-3 border-b border-gray-100">
             <p className="text-xs text-gray-500">Top Event Probability</p>
             <p className="text-2xl font-bold text-red-600">
@@ -1352,11 +1421,12 @@ export default function FaultTreePage() {
             )}
           </div>
 
-          <div className="p-2 border-t border-gray-100">
+          <div className="p-2 border-t border-gray-100 flex flex-col gap-1">
             <button onClick={downloadMCS}
               className="w-full flex items-center justify-center gap-1 text-xs text-gray-500 hover:text-blue-600 border border-gray-200 py-1.5 rounded">
               <Download size={11} /> Export MCS
             </button>
+            <ExportResultsButton getElement={() => resultsRef.current} baseName="fault-tree-results" />
           </div>
         </div>
       )}

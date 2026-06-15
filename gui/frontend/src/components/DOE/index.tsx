@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import Plot from 'react-plotly.js'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type PlotlyLayout = any
 import { Download, Play } from 'lucide-react'
 import InfoLabel from '../shared/InfoLabel'
+import ExportResultsButton from '../shared/ExportResultsButton'
 import { generateDesign, GenerateDesignResponse } from '../../api/doe'
 import { useModuleState } from '../../store/project'
 
@@ -137,6 +138,7 @@ export default function DOE() {
   const [result, setResult] = useState<GenerateDesignResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const resultsRef = useRef<HTMLDivElement>(null)
 
   const patch = (patch: Partial<DOEState>) => setState(s => ({ ...s, ...patch }))
 
@@ -607,7 +609,7 @@ export default function DOE() {
             <p className="text-sm">Configure a design and click Generate.</p>
           </div>
         ) : (
-          <>
+          <div ref={resultsRef}>
             {/* Header + Export */}
             <div className="flex items-center justify-between">
               <div>
@@ -619,10 +621,13 @@ export default function DOE() {
                   {metadata['k'] != null && ` · ${metadata['k']} factors`}
                 </p>
               </div>
-              <button onClick={exportCSV}
-                className="flex items-center gap-1.5 text-xs border border-gray-300 rounded px-3 py-1.5 hover:bg-gray-50 transition-colors">
-                <Download size={13} /> Export CSV
-              </button>
+              <div className="flex items-center gap-2">
+                <ExportResultsButton getElement={() => resultsRef.current} baseName="doe" />
+                <button onClick={exportCSV}
+                  className="flex items-center gap-1.5 text-xs border border-gray-300 rounded px-3 py-1.5 hover:bg-gray-50 transition-colors">
+                  <Download size={13} /> Export CSV
+                </button>
+              </div>
             </div>
 
             {/* Design matrix table */}
@@ -747,7 +752,7 @@ export default function DOE() {
                 )}
               </div>
             )}
-          </>
+          </div>
         )}
       </div>
     </div>

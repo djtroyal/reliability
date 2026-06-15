@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import Plot from 'react-plotly.js'
 import { Play, Plus, Minus } from 'lucide-react'
 import {
@@ -8,6 +8,7 @@ import {
 import { useFolioState, useUnits } from '../../store/project'
 import FolioBar from '../shared/FolioBar'
 import InfoLabel from '../shared/InfoLabel'
+import ExportResultsButton from '../shared/ExportResultsButton'
 
 const DISTRIBUTIONS = [
   'Weibull_2P', 'Weibull_3P', 'Lognormal_2P', 'Normal_2P',
@@ -67,6 +68,7 @@ export default function Warranty() {
 
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const resultsRef = useRef<HTMLDivElement>(null)
 
   // --- Table manipulation ---
 
@@ -346,7 +348,12 @@ export default function Warranty() {
 
   const renderMainContent = () => {
     return (
-      <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-6">
+      <div ref={resultsRef} className="flex-1 overflow-y-auto p-6 flex flex-col gap-6">
+        {hasResults && (
+          <div className="flex justify-end">
+            <ExportResultsButton getElement={() => resultsRef.current} baseName="warranty" />
+          </div>
+        )}
         {/* Nevada Chart data entry */}
         {renderNevadaChart()}
 

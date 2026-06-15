@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import Plot from 'react-plotly.js'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type PlotlyLayout = any
 import { Play, GitCompare } from 'lucide-react'
 import InfoLabel from '../shared/InfoLabel'
+import ExportResultsButton from '../shared/ExportResultsButton'
 import DataTable, { DataColumn } from '../shared/DataTable'
 import DataGenerator from '../shared/DataGenerator'
 import { useModuleState } from '../../store/project'
@@ -54,6 +55,7 @@ export default function Predictive() {
   const patch = (p: Partial<PredState>) => setS(prev => ({ ...prev, ...p }))
   const [loading, setLoading] = useState<'fit' | 'compare' | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const resultsRef = useRef<HTMLDivElement>(null)
 
   const cols: DataColumn[] = s.colNames.map(c => ({ key: c, label: c, type: 'number' as const }))
 
@@ -188,7 +190,10 @@ export default function Predictive() {
             </div>
           </div>
         ) : (
-          <div className="p-6 flex flex-col gap-6">
+          <div ref={resultsRef} className="p-6 flex flex-col gap-6">
+            <div className="flex justify-end">
+              <ExportResultsButton getElement={() => resultsRef.current} baseName="predictive" />
+            </div>
             {fit && <FitResults fit={fit} />}
             {cmp && <CompareResults cmp={cmp} />}
           </div>

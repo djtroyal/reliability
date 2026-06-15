@@ -244,6 +244,31 @@ export function useFolioState<T>(moduleKey: string, initial: T):
   return [active.state, setActiveState, api]
 }
 
+/**
+ * Write state to a *specific* folio by id (not necessarily the active one).
+ * Used by canvas modules to flush a folio's pending edits to the folio they
+ * belong to before switching the active folio — otherwise a debounced write
+ * would either be discarded or land in the wrong (newly selected) folio. No-op
+ * if the module isn't folio-wrapped yet or the folio no longer exists.
+ */
+export function writeFolioState<T>(moduleKey: string, folioId: string, nextState: T) {
+  const cur = state.modules[moduleKey] as unknown
+  if (!isFolioWrap(cur)) return
+  const w = cur as FolioWrap<T>
+  if (!w.folios.some(f => f.id === folioId)) return
+  state = {
+    ...state,
+    modules: {
+      ...state.modules,
+      [moduleKey]: {
+        ...w,
+        folios: w.folios.map(f => f.id === folioId ? { ...f, state: nextState } : f),
+      },
+    },
+  }
+  emit()
+}
+
 // ---------------------------------------------------------------------------
 // Import / export
 // ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import Plot from 'react-plotly.js'
 import { Play, Plus, Trash2 } from 'lucide-react'
 import {
@@ -13,6 +13,7 @@ import {
 } from '../../api/client'
 import { useFolioState } from '../../store/project'
 import FolioBar from '../shared/FolioBar'
+import ExportResultsButton from '../shared/ExportResultsButton'
 
 type SubTab =
   | 'sn' | 'stress-strain' | 'creep' | 'damage' | 'fracture'
@@ -209,6 +210,7 @@ export default function PhysicsOfFailure() {
 
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const resultsRef = useRef<HTMLDivElement>(null)
 
   // ---------- SN Curve ----------
   const runSN = async () => {
@@ -978,6 +980,20 @@ export default function PhysicsOfFailure() {
   }
 
   // ========== MAIN CONTENT ==========
+  // Result present for the active sub-tab (gates the Export button).
+  const currentResult = {
+    'sn': s.snResult,
+    'stress-strain': s.ssResult,
+    'creep': s.crResult,
+    'damage': s.dmgResult,
+    'fracture': s.frResult,
+    'coffin-manson': s.cmResult,
+    'norris-landzberg': s.nlResult,
+    'electromigration': s.emResult,
+    'peck': s.pkResult,
+    'arrhenius': s.arResult,
+  }[subTab]
+
   const renderMainContent = () => {
     switch (subTab) {
       case 'sn': {
@@ -1556,7 +1572,12 @@ export default function PhysicsOfFailure() {
         </div>
 
         {/* Main content */}
-        <div className="flex-1 overflow-hidden flex flex-col">
+        <div ref={resultsRef} className="flex-1 overflow-hidden flex flex-col">
+          {currentResult && (
+            <div className="flex justify-end px-6 pt-4">
+              <ExportResultsButton getElement={() => resultsRef.current} baseName="physics_of_failure" />
+            </div>
+          )}
           {renderMainContent()}
         </div>
       </div>

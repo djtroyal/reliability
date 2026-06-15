@@ -3,6 +3,7 @@ import Plot from 'react-plotly.js'
 import { Play, Download, Trash2 } from 'lucide-react'
 import FileUpload from '../shared/FileUpload'
 import ResultsTable from '../shared/ResultsTable'
+import ExportResultsButton from '../shared/ExportResultsButton'
 import {
   fitALT, ALTFitResponse,
   computeSampleSize, SampleSizeRequest, SampleSizeResponse,
@@ -216,6 +217,7 @@ export default function ALT() {
   } = s
   const result = s.result ?? null
   const psResult = s.psResult ?? null
+  const resultsRef = useRef<HTMLDivElement>(null)
 
   const patch = (p: Partial<ALTState>) => setS(prev => ({ ...prev, ...p }))
   const setMode = (v: ALTState['mode']) => patch({ mode: v })
@@ -729,7 +731,10 @@ export default function ALT() {
       <div className="flex-1 overflow-hidden flex flex-col">
         {mode === 'fitting' ? (
           result ? (
-            <>
+            <div ref={resultsRef} className="flex-1 overflow-hidden flex flex-col">
+              <div className="flex justify-end">
+                <ExportResultsButton getElement={() => resultsRef.current} baseName="alt" />
+              </div>
               <div className="bg-white border-b border-gray-200 px-4 py-2 flex items-center justify-between">
                 <p className="text-sm text-gray-600">
                   Best model: <span className="font-semibold text-green-700">{result.best_model}</span>
@@ -769,7 +774,7 @@ export default function ALT() {
                   )}
                 </div>
               </div>
-            </>
+            </div>
           ) : (
             <div className="flex-1 flex items-center justify-center text-gray-400">
               <div className="text-center">

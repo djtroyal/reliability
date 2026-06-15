@@ -2,6 +2,7 @@
 
 import sys
 import math
+import random
 from itertools import combinations
 from fastapi import APIRouter, HTTPException
 from pathlib import Path
@@ -283,13 +284,31 @@ def _method_probabilities(mcs_list, events, methods):
     return results
 
 
+def _simulate_top_event(mcs_list, events, n_simulations: int) -> float:
+    """Monte Carlo simulation: sample each basic event as Bernoulli(p),
+    then check if ANY minimal cut set is fully failed. The fraction of
+    trials where the top event occurs estimates P(TOP)."""
+    if not mcs_list or n_simulations <= 0:
+        return 0.0
+    event_names = sorted({e for cs in mcs_list for e in cs})
+    probs = {e: events[e].probability if e in events else 0.0 for e in event_names}
+    top_count = 0
+    for _ in range(n_simulations):
+        failed = {e for e in event_names if random.random() < probs[e]}
+        for cs in mcs_list:
+            if cs <= failed:
+                top_count += 1
+                break
+    return top_count / n_simulations
+
+
 @router.post("/analyze")
 def analyze_fault_tree(req: FaultTreeRequest):
     if not req.nodes:
         raise HTTPException(status_code=400, detail="Fault tree has no nodes.")
 
     methods = req.methods or ["exact"]
-    valid_methods = {"exact", "rare_event", "min_cut_upper_bound"}
+    valid_methods = {"exact", "rare_event", "min_cut_upper_bound", "simulation"}
     methods = [m for m in methods if m in valid_methods] or ["exact"]
 
     trees = {k: v for k, v in (req.trees or {}).items()}
@@ -357,6 +376,9 @@ def analyze_fault_tree(req: FaultTreeRequest):
 
     # Formulas (#6) and per-method probabilities (#7)
     method_probs = _method_probabilities(mcs_sets, events, methods)
+    if "simulation" in methods:
+        n_sim = max(1000, min(req.n_simulations or 10000, 10_000_000))
+        method_probs["simulation"] = _simulate_top_event(mcs_sets, events, n_sim)
     mcs_formulas = _mcs_formulas(mcs_sets, events)
     bool_expr = _boolean_expression(top_event)
 

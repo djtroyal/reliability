@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import Plot from 'react-plotly.js'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type PlotlyLayout = any
 import { Play } from 'lucide-react'
 import InfoLabel from '../shared/InfoLabel'
+import ExportResultsButton from '../shared/ExportResultsButton'
 import { useModuleState } from '../../store/project'
 import {
   getSummaryStatistics,
@@ -121,6 +122,7 @@ export default function Descriptive() {
   const [state, setState] = useModuleState<DescriptiveState>('descriptive', INITIAL_STATE)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const resultsRef = useRef<HTMLDivElement>(null)
 
   // Results
   const [summaryRes, setSummaryRes] = useState<SummaryResponse | null>(null)
@@ -756,8 +758,13 @@ export default function Descriptive() {
     <div className="flex h-[calc(100vh-57px)]">
       {leftPanel}
       <div className="flex-1 overflow-auto flex flex-col">
-        {tabBar}
-        <div className="flex-1 overflow-auto">
+        <div className="flex items-center">
+          <div className="flex-1">{tabBar}</div>
+          <div className="pr-4">
+            <ExportResultsButton getElement={() => resultsRef.current} baseName="descriptive" />
+          </div>
+        </div>
+        <div ref={resultsRef} className="flex-1 overflow-auto">
           {tabContent[state.activeTab]}
         </div>
       </div>

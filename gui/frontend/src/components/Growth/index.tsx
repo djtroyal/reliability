@@ -6,6 +6,7 @@ import { useModuleActiveState, useFolioState, useUnits } from '../../store/proje
 import InfoLabel from '../shared/InfoLabel'
 import FolioBar from '../shared/FolioBar'
 import RepairableTools from './RepairableTools'
+import ExportResultsButton from '../shared/ExportResultsButton'
 
 type GrowthView = 'growth' | 'replacement' | 'rocof' | 'mcf'
 
@@ -59,6 +60,7 @@ export default function Growth() {
   const lifeData = useModuleActiveState<LifeDataLite>('lifeData', { folios: [] })
   const [units] = useUnits()
   const tableRef = useRef<HTMLDivElement>(null)
+  const resultsRef = useRef<HTMLDivElement>(null)
 
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -294,7 +296,10 @@ export default function Growth() {
               </div>
             </div>
           ) : (
-            <div className="flex-1 overflow-y-auto p-6">
+            <div ref={resultsRef} className="flex-1 overflow-y-auto p-6">
+              <div className="flex justify-end">
+                <ExportResultsButton getElement={() => resultsRef.current} baseName="growth" />
+              </div>
               {/* Results summary */}
               <div className="mb-6">
                 <h3 className="text-sm font-semibold text-gray-800 mb-3">

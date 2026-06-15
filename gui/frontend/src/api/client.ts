@@ -488,6 +488,7 @@ export interface FaultTreeGraph {
 export interface AnalyzeFaultTreeOptions {
   exposureTime?: number | null
   methods?: string[]
+  nSimulations?: number
   trees?: Record<string, FaultTreeGraph>
   treeId?: string | null
 }
@@ -500,6 +501,7 @@ export const analyzeFaultTree = (
     edges,
     exposure_time: opts.exposureTime ?? null,
     methods: opts.methods,
+    n_simulations: opts.nSimulations,
     trees: opts.trees,
     tree_id: opts.treeId ?? null,
   }).then(r => r.data)

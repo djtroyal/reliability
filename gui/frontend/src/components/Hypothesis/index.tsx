@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import Plot from 'react-plotly.js'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type PlotlyLayout = any
 import { Play } from 'lucide-react'
 import InfoLabel from '../shared/InfoLabel'
+import ExportResultsButton from '../shared/ExportResultsButton'
 import { useModuleState } from '../../store/project'
 import {
   runHypothesisTest,
@@ -441,6 +442,7 @@ function BoxPlot({ groups, labels }: { groups: number[][]; labels: string[] }) {
 export default function Hypothesis() {
   const [state, setState] = useModuleState<HypothesisState>('hypothesis', INITIAL)
   const [loading, setLoading] = useState(false)
+  const resultsRef = useRef<HTMLDivElement>(null)
 
   const patch = (p: Partial<HypothesisState>) => setState(s => ({ ...s, ...p }))
 
@@ -761,7 +763,10 @@ export default function Hypothesis() {
             Configure inputs and click <strong className="mx-1">Run Test</strong> to see results.
           </div>
         ) : (
-          <div className="max-w-4xl">
+          <div ref={resultsRef} className="max-w-4xl">
+            <div className="flex justify-end mb-3">
+              <ExportResultsButton getElement={() => resultsRef.current} baseName="hypothesis" />
+            </div>
             {/* Result card */}
             <ResultCard result={state.result} />
 

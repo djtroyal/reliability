@@ -6,6 +6,7 @@ import { Play, Download, Plus, Trash2, Upload, X, GitCompare, Dices, Check, Calc
 import Papa from 'papaparse'
 import ResultsTable from '../shared/ResultsTable'
 import InfoLabel from '../shared/InfoLabel'
+import ExportResultsButton from '../shared/ExportResultsButton'
 import {
   fitDistributions, fitNonparametric, generateSamples, getSpecCurves,
   compareFolios, calculateMetrics, CalculatorResponse, computeStressStrength, fitSpecialModel,
@@ -284,6 +285,7 @@ export default function LifeData() {
   const [units] = useUnits()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const resultsRef = useRef<HTMLDivElement>(null)
   // Single-screen plot view: probability plot or a distribution curve
   const [view, setView] = useState<ViewTab>('Probability')
   // Overlay a density histogram of the dataset on the PDF curve
@@ -1735,6 +1737,11 @@ export default function LifeData() {
 
           {/* Main content */}
           <div className="flex-1 overflow-hidden flex flex-col">
+            {(fitResult || folio.specResult || specialResult || npResult) && (
+              <div ref={resultsRef} className="flex-1 overflow-hidden flex flex-col">
+                <div className="flex justify-end">
+                  <ExportResultsButton getElement={() => resultsRef.current} baseName="life_data" />
+                </div>
             {/* Spec model (no data) — curves only */}
             {folio.specResult && !fitResult && (
               <div className="flex-1 overflow-y-auto p-6">
@@ -2058,6 +2065,8 @@ export default function LifeData() {
                   style={{ width: '100%', height: '90%' }}
                   useResizeHandler
                 />
+              </div>
+            )}
               </div>
             )}
 

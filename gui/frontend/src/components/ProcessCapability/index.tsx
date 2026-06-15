@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import Plot from 'react-plotly.js'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type PlotlyLayout = any
@@ -7,6 +7,7 @@ import InfoLabel from '../shared/InfoLabel'
 import NumberField from '../shared/NumberField'
 import DataTable from '../shared/DataTable'
 import DataGenerator from '../shared/DataGenerator'
+import ExportResultsButton from '../shared/ExportResultsButton'
 import { useModuleState } from '../../store/project'
 import { analyzeCapability, CapabilityResponse } from '../../api/capability'
 
@@ -33,6 +34,7 @@ export default function ProcessCapability() {
   const patch = (p: Partial<PCState>) => setS(prev => ({ ...prev, ...p }))
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const resultsRef = useRef<HTMLDivElement>(null)
 
   const values = () =>
     s.rows.map(r => parseFloat(r.x)).filter(v => !isNaN(v))
@@ -140,7 +142,10 @@ export default function ProcessCapability() {
             </div>
           </div>
         ) : (
-          <div className="p-6">
+          <div ref={resultsRef} className="p-6">
+            <div className="flex justify-end mb-3">
+              <ExportResultsButton getElement={() => resultsRef.current} baseName="process-capability" />
+            </div>
             {/* Indices cards */}
             <h3 className="text-sm font-semibold text-gray-800 mb-3">Capability Indices</h3>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">

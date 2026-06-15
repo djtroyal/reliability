@@ -11,6 +11,7 @@ import {
 } from '../../api/client'
 import { useFolioState } from '../../store/project'
 import FolioBar from '../shared/FolioBar'
+import ExportResultsButton from '../shared/ExportResultsButton'
 
 // Icon + accent color per component category, shown in the Parts List.
 const CATEGORY_ICONS: Record<string, { Icon: typeof Cpu; color: string }> = {
@@ -342,6 +343,7 @@ export default function Prediction() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  const resultsRef = useRef<HTMLDivElement>(null)
 
   const patch = (p: Partial<PredictionState>) => setState(s => ({ ...s, ...p }))
   // Any change to inputs invalidates the previous run
@@ -1040,7 +1042,10 @@ export default function Prediction() {
         </div>
 
         {result ? (
-          <>
+          <div ref={resultsRef}>
+            <div className="flex justify-end mb-3">
+              <ExportResultsButton getElement={() => resultsRef.current} baseName="prediction" />
+            </div>
             {/* Summary cards */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
               <div className="rounded-lg border bg-blue-50 border-blue-200 p-3">
@@ -1126,7 +1131,7 @@ export default function Prediction() {
               </div>
             )}
             </div>
-          </>
+          </div>
         ) : (
           parts.length > 0 && (
             <p className="text-xs text-gray-400">

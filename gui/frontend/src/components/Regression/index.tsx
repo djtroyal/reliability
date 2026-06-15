@@ -1,9 +1,11 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useRef } from 'react'
 import Plot from 'react-plotly.js'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type PlotlyLayout = any
 import { Play } from 'lucide-react'
 import InfoLabel from '../shared/InfoLabel'
+import ExportResultsButton from '../shared/ExportResultsButton'
+import DataGenerator from '../shared/DataGenerator'
 import { useModuleState } from '../../store/project'
 import {
   fitRegression,
@@ -30,6 +32,7 @@ interface RegressionState {
   degreeText: string
   fitIntercept: boolean
   result: FitRegressionResponse | null
+  genCol: string
 }
 
 const INITIAL_STATE: RegressionState = {
@@ -54,6 +57,7 @@ const INITIAL_STATE: RegressionState = {
   degreeText: '2',
   fitIntercept: true,
   result: null,
+  genCol: '',
 }
 
 // ---------------------------------------------------------------------------
@@ -119,6 +123,7 @@ export default function Regression() {
   const [state, setState] = useModuleState<RegressionState>('regression', INITIAL_STATE)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const resultsRef = useRef<HTMLDivElement>(null)
 
   const { columns, data } = useMemo(() => parseTable(state.rawText), [state.rawText])
 
@@ -129,6 +134,11 @@ export default function Regression() {
 
   const predictorCols = state.predictorCols.filter(c => columns.includes(c) && c !== responseCol)
 
+  // Auto-select first column to generate if none selected (or stale)
+  const genCol = state.genCol && columns.includes(state.genCol)
+    ? state.genCol
+    : columns[0] ?? ''
+
   const patch = (p: Partial<RegressionState>) => setState(s => ({ ...s, ...p }))
 
   const togglePredictor = (col: string) => {
@@ -136,6 +146,24 @@ export default function Regression() {
       ? predictorCols.filter(c => c !== col)
       : [...predictorCols, col]
     patch({ predictorCols: cols })
+  }
+
+  // Fill the selected column with generated values, rewriting the raw table text.
+  const fillColumn = (col: string) => (vals: number[]) => {
+    const colIdx = columns.indexOf(col)
+    if (colIdx < 0) return
+    const sep = state.rawText.includes('\t') ? '\t' : ','
+    const nRows = Math.max(vals.length, ...columns.map(c => data[c]?.length ?? 0))
+    const lines = [columns.join(sep)]
+    for (let i = 0; i < nRows; i++) {
+      const cells = columns.map((c, ci) => {
+        if (ci === colIdx) return i < vals.length ? String(vals[i]) : ''
+        const cv = data[c]?.[i]
+        return cv != null ? String(cv) : ''
+      })
+      lines.push(cells.join(sep))
+    }
+    patch({ rawText: lines.join('\n'), result: null })
   }
 
   const handleRun = async () => {
@@ -308,6 +336,22 @@ export default function Regression() {
           />
         </div>
 
+        {/* Generate column */}
+        {columns.length > 0 && (
+          <div>
+            <InfoLabel tip="Select which column to fill with generated sample data.">Generate Column</InfoLabel>
+            <select
+              value={genCol}
+              onChange={e => patch({ genCol: e.target.value })}
+              className="w-full text-xs border border-gray-300 rounded px-2 py-1.5 mb-2 focus:outline-none focus:ring-1 focus:ring-blue-400"
+            >
+              {columns.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <DataGenerator defaultDist="normal" onGenerate={fillColumn(genCol)}
+              label={`Generate column "${genCol}"`} />
+          </div>
+        )}
+
         {/* Response column */}
         {columns.length > 0 && (
           <div>
@@ -447,7 +491,10 @@ export default function Regression() {
         )}
 
         {result && (
-          <div className="flex flex-col gap-6">
+          <div ref={resultsRef} className="flex flex-col gap-6">
+            <div className="flex justify-end">
+              <ExportResultsButton getElement={() => resultsRef.current} baseName="regression" />
+            </div>
 
             {/* ---- Fit Statistics ---- */}
             <section>

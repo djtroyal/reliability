@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import Plot from 'react-plotly.js'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type PlotlyLayout = any
@@ -7,6 +7,7 @@ import InfoLabel from '../shared/InfoLabel'
 import DataTable, { DataColumn } from '../shared/DataTable'
 import DataGenerator from '../shared/DataGenerator'
 import { useModuleState } from '../../store/project'
+import ExportResultsButton from '../shared/ExportResultsButton'
 import { computeChart, ChartResponse, ChartType, SubChart } from '../../api/spc'
 
 interface SPCState {
@@ -39,6 +40,7 @@ export default function SPC() {
   const patch = (p: Partial<SPCState>) => setS(prev => ({ ...prev, ...p }))
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const resultsRef = useRef<HTMLDivElement>(null)
 
   const columns: DataColumn[] = VARIABLE_SUBGROUP(s.chart)
     ? ['a', 'b', 'c', 'd', 'e'].map((k, i) => ({ key: k, label: `x${i + 1}`, type: 'number' as const }))
@@ -133,7 +135,10 @@ export default function SPC() {
             </div>
           </div>
         ) : (
-          <div className="p-6 flex flex-col gap-4">
+          <div ref={resultsRef} className="p-6 flex flex-col gap-4">
+            <div className="flex justify-end">
+              <ExportResultsButton getElement={() => resultsRef.current} baseName="spc" />
+            </div>
             {r.subcharts.map((sc, i) => <ControlChart key={i} sc={sc} />)}
 
             <div>

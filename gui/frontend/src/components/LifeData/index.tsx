@@ -935,6 +935,33 @@ export default function LifeData() {
       line: { color: '#ef4444', width: 2 } }]
   })()
 
+  // --- weibayes plots (#15) ---
+
+  const weibayesResult = folio.weibayesResult
+  const weibayesCurveData = (() => {
+    if (!weibayesResult?.curves?.x) return []
+    const c = weibayesResult.curves
+    const dyn = c as unknown as Record<string, (number | null)[] | undefined>
+    const y = dyn[curveKey]
+    if (!y) return []
+    const traces: Record<string, unknown>[] = []
+    if (curveKey === 'sf' && c.sf_lower && c.sf_upper) {
+      traces.push({ x: c.x, y: c.sf_upper, mode: 'lines', line: { width: 0 },
+        showlegend: false, hoverinfo: 'skip' })
+      traces.push({ x: c.x, y: c.sf_lower, mode: 'lines',
+        name: `${Math.round(weibayesResult.CI * 100)}% CI`,
+        fill: 'tonexty', fillcolor: 'rgba(59,130,246,0.15)', line: { width: 0 }, hoverinfo: 'skip' })
+    }
+    traces.push({ x: c.x, y, mode: 'lines', name: curveTab,
+      line: { color: '#3b82f6', width: 2 } })
+    if (showSuspensions) {
+      const { rc } = folioData(folio)
+      const t = suspensionTrace(rc, c as unknown as CurveData, curveKey)
+      if (t) traces.push(t)
+    }
+    return traces
+  })()
+
   const npResult = folio.npResult
   const npPlotData = (() => {
     if (!npResult) return []
@@ -2253,7 +2280,96 @@ export default function LifeData() {
               </div>
             )}
 
-            {!fitResult && !npResult && !folio.specResult && !specialResult && (
+            {weibayesResult && !fitResult && !npResult && !folio.specResult && !specialResult && (
+              <div className="flex-1 overflow-y-auto p-6">
+                <h3 className="text-sm font-semibold text-gray-700 mb-3">
+                  Weibayes Fit (Weibull, fixed β = {fmt(weibayesResult.beta)})
+                </h3>
+
+                {/* Fit summary */}
+                <div className="grid grid-cols-3 gap-3 mb-4 max-w-xl">
+                  <div className="rounded-lg border bg-white border-gray-200 p-3">
+                    <p className="text-xs text-gray-500">Characteristic life η</p>
+                    <p className="text-lg font-semibold text-gray-900">{fmt(weibayesResult.eta)}</p>
+                  </div>
+                  <div className="rounded-lg border bg-white border-gray-200 p-3">
+                    <p className="text-xs text-gray-500">Failures / Total</p>
+                    <p className="text-lg font-semibold text-gray-900">{weibayesResult.r} / {weibayesResult.n_total}</p>
+                  </div>
+                  <div className="rounded-lg border bg-white border-gray-200 p-3">
+                    <p className="text-xs text-gray-500">Assumed β</p>
+                    <p className="text-lg font-semibold text-gray-900">{fmt(weibayesResult.beta)}</p>
+                  </div>
+                </div>
+
+                {/* Parameter table with CI bounds */}
+                <div className="mb-4 max-w-md">
+                  <p className="text-xs font-medium text-gray-500 mb-2">
+                    Parameters ({Math.round(weibayesResult.CI * 100)}% CI)
+                  </p>
+                  <table className="w-full text-xs border-collapse">
+                    <thead>
+                      <tr className="text-gray-500 border-b border-gray-200">
+                        <th className="text-left py-1 font-medium">Name</th>
+                        <th className="text-right py-1 font-medium">Value</th>
+                        <th className="text-right py-1 font-medium">Lower</th>
+                        <th className="text-right py-1 font-medium">Upper</th>
+                      </tr>
+                    </thead>
+                    <tbody className="font-mono">
+                      <tr className="border-b border-gray-100">
+                        <td className="py-1 text-gray-700">β (fixed)</td>
+                        <td className="py-1 text-right">{fmt(weibayesResult.beta)}</td>
+                        <td className="py-1 text-right text-gray-400">—</td>
+                        <td className="py-1 text-right text-gray-400">—</td>
+                      </tr>
+                      <tr className="border-b border-gray-100">
+                        <td className="py-1 text-gray-700">η</td>
+                        <td className="py-1 text-right">{fmt(weibayesResult.eta)}</td>
+                        <td className="py-1 text-right">{fmt(weibayesResult.eta_lower)}</td>
+                        <td className="py-1 text-right">{fmt(weibayesResult.eta_upper)}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  {weibayesResult.zero_failure && (
+                    <p className="text-[11px] text-amber-600 mt-2">
+                      Zero-failure case: η is a conservative lower-bound estimate from the suspension data.
+                    </p>
+                  )}
+                </div>
+
+                {/* View tabs */}
+                <div className="flex gap-1 mb-3">
+                  {CURVE_TABS.map(t => (
+                    <button key={t} onClick={() => setView(t)}
+                      className={`px-2.5 py-1 text-xs rounded border ${
+                        curveTab === t ? 'bg-blue-600 text-white border-blue-600'
+                          : 'border-gray-300 text-gray-600 hover:bg-gray-50'}`}
+                    >{t}</button>
+                  ))}
+                </div>
+
+                {/* Curve */}
+                <div className="bg-white border border-gray-200 rounded-lg" style={{ height: 400 }}>
+                  <Plot
+                    data={weibayesCurveData as Plotly.Data[]}
+                    layout={{
+                      title: { text: `${curveTab} — Weibayes` },
+                      xaxis: { title: { text: `Time (${units})` }, gridcolor: '#e5e7eb' },
+                      yaxis: { title: { text: curveTab }, gridcolor: '#e5e7eb' },
+                      margin: { t: 40, r: 20, b: 50, l: 60 },
+                      paper_bgcolor: 'white', plot_bgcolor: 'white',
+                      showlegend: true, legend: { x: 0.02, y: 0.98 },
+                    } as PlotlyLayout}
+                    config={{ responsive: true }}
+                    style={{ width: '100%', height: '100%' }}
+                    useResizeHandler
+                  />
+                </div>
+              </div>
+            )}
+
+            {!fitResult && !npResult && !folio.specResult && !specialResult && !weibayesResult && (
               <div className="flex-1 flex items-center justify-center text-gray-400">
                 <div className="text-center">
                   <p className="text-lg font-medium">No results yet — {folio.name}</p>

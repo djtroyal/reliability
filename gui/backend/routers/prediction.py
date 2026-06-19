@@ -422,7 +422,7 @@ def analyze_derating(req: DeratingRequest):
         for dr in derating_results:
             entry = {
                 "parameter": dr.parameter,
-                "description": dr.description,
+                "description": dr.parameter,
                 "actual_value": dr.actual_value,
                 "rated_value": dr.rated_value,
                 "stress_ratio": round(dr.stress_ratio, 4) if dr.stress_ratio is not None else None,

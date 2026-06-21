@@ -38,6 +38,7 @@ class FitRequest(BaseModel):
     alpha: Optional[float] = 1.0
     degree: Optional[int] = 2
     fit_intercept: Optional[bool] = True
+    CI: Optional[float] = 0.95     # confidence level for coefficient intervals
 
 
 # ---------------------------------------------------------------------------
@@ -142,11 +143,13 @@ def fit_regression(req: FitRequest):
         y = np.array(y_raw, dtype=float)
 
     try:
+        ci_level = req.CI if req.CI is not None else 0.95
         if model == "linear":
             result = linear_regression(
                 X, y,
                 feature_names=list(req.x),
                 fit_intercept=req.fit_intercept if req.fit_intercept is not None else True,
+                CI=ci_level,
             )
 
         elif model == "ridge":
@@ -162,6 +165,7 @@ def fit_regression(req: FitRequest):
                 X, y,
                 feature_names=list(req.x),
                 fit_intercept=req.fit_intercept if req.fit_intercept is not None else True,
+                CI=ci_level,
             )
 
         elif model == "polynomial":
@@ -169,7 +173,7 @@ def fit_regression(req: FitRequest):
                 raise ValueError("Polynomial regression requires exactly one predictor column.")
             degree = req.degree if req.degree is not None else 2
             x_1d = X[:, 0]
-            result = polynomial_regression(x_1d, y, degree=degree)
+            result = polynomial_regression(x_1d, y, degree=degree, CI=ci_level)
 
         else:
             raise HTTPException(

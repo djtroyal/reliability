@@ -55,6 +55,8 @@ interface DMState {
   metricReg: string
   metricClass: string
   genCol: string
+  genFormula: string
+  ci: number
 }
 
 const DEFAULT_COLS = ['x1', 'x2', 'y']
@@ -82,6 +84,8 @@ const INITIAL: DMState = {
   metricReg: 'r2',
   metricClass: 'accuracy',
   genCol: 'y',
+  genFormula: '',
+  ci: 0.95,
 }
 
 const REG_METRICS = [
@@ -148,6 +152,33 @@ export default function DataModeling() {
       const idx = rows.length
       rows.push(Object.fromEntries(s.columns.map(c => [c, c === col ? String(vals[idx]) : ''])))
     }
+    patch({ rows })
+  }
+
+  // --- formula-based column generation (#6) ---
+  // Evaluate `genFormula` per row using the other columns as variables, e.g.
+  // "x1 * 2", "sqrt(x1) + log(x2)", "(a + b) / 2". Safe: only column names and
+  // a whitelist of Math functions/constants are allowed.
+  const applyFormula = () => {
+    const formula = s.genFormula.trim()
+    if (!formula) { setError('Enter a formula, e.g. x1 * 2'); return }
+    const otherCols = s.columns.filter(c => c !== s.genCol)
+    let evaluator: (vals: number[]) => number
+    try {
+      evaluator = buildFormula(formula, otherCols)
+    } catch (e) {
+      setError((e as Error).message); return
+    }
+    setError(null)
+    const rows = s.rows.map(r => {
+      const args = otherCols.map(c => Number((r[c] ?? '').trim()))
+      let out = ''
+      if (args.every(Number.isFinite)) {
+        const v = evaluator(args)
+        if (Number.isFinite(v)) out = String(Number(v.toFixed(6)))
+      }
+      return { ...r, [s.genCol]: out }
+    })
     patch({ rows })
   }
 
@@ -229,6 +260,7 @@ export default function DataModeling() {
         alpha: readParam(mdef, 'alpha') as number | undefined,
         degree: readParam(mdef, 'degree') as number | undefined,
         fit_intercept: readParam(mdef, 'fit_intercept') as boolean | undefined,
+        CI: s.ci,
       })
       return { ...base, metrics: normalizeReg(res, modelId), reg: res }
     } else {
@@ -293,6 +325,7 @@ export default function DataModeling() {
         alpha: readParam(mdef, 'alpha') as number | undefined,
         degree: readParam(mdef, 'degree') as number | undefined,
         fit_intercept: readParam(mdef, 'fit_intercept') as boolean | undefined,
+        CI: s.ci,
       })
       return { ...base, metrics: normalizeReg(res, mdef.id), reg: res }
     }
@@ -345,12 +378,27 @@ export default function DataModeling() {
         </div>
 
         <div>
-          <InfoLabel tip="Fill a column with generated values from a chosen distribution.">Generate column</InfoLabel>
+          <InfoLabel tip="Fill a column either with random draws from a distribution, or with a formula computed from the other columns (e.g. x1 * 2, sqrt(x1) + log(x2)).">Generate column</InfoLabel>
           <div className="flex gap-2 items-center mb-2">
             <select value={s.genCol} onChange={e => patch({ genCol: e.target.value })} className={inputCls}>
               {s.columns.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
           </div>
+          {/* Formula generation (#6) */}
+          <div className="flex gap-1.5 items-center mb-2">
+            <span className="text-xs font-mono text-gray-500 whitespace-nowrap">{s.genCol} =</span>
+            <input type="text" value={s.genFormula} placeholder="e.g. x1 * 2"
+              onChange={e => patch({ genFormula: e.target.value })}
+              onKeyDown={e => { if (e.key === 'Enter') applyFormula() }}
+              className="flex-1 text-xs border border-gray-300 rounded px-2 py-1.5 font-mono focus:outline-none focus:ring-1 focus:ring-blue-400" />
+            <button onClick={applyFormula}
+              className="text-xs px-2 py-1.5 border border-blue-600 text-blue-700 rounded hover:bg-blue-50 whitespace-nowrap">
+              Apply
+            </button>
+          </div>
+          <p className="text-[10px] text-gray-400 mb-2">
+            Formula uses other columns + math (sqrt, log, exp, sin, pow, min, max, pi…). Or draw randomly:
+          </p>
           <DataGenerator defaultDist="normal" onGenerate={fillColumn(s.genCol)}
             label={`Generate "${s.genCol}"`} />
         </div>
@@ -459,6 +507,19 @@ export default function DataModeling() {
                 </div>
               ))}
             </div>
+          </div>
+        )}
+
+        {/* Confidence level for classical regression inference (#7) */}
+        {def.backend === 'regression' && def.id !== 'ridge' && def.id !== 'lasso' && (
+          <div className="flex items-center justify-between gap-2">
+            <InfoLabel tip="Confidence level for the coefficient confidence intervals (and odds-ratio CIs for logistic). Ridge/Lasso do not report inference intervals.">Confidence level</InfoLabel>
+            <select value={String(s.ci)} onChange={e => patch({ ci: parseFloat(e.target.value) })}
+              className="text-xs border border-gray-300 rounded px-1.5 py-1 w-24">
+              <option value="0.90">90%</option>
+              <option value="0.95">95%</option>
+              <option value="0.99">99%</option>
+            </select>
           </div>
         )}
 
@@ -705,4 +766,45 @@ function summaryMetric(f: FittedModel): string {
 
 function errDetail(e: unknown): string | undefined {
   return (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+}
+
+// Whitelisted math helpers usable in column formulas (without a `Math.` prefix).
+const FORMULA_FUNCS: Record<string, (...a: number[]) => number> = {
+  sqrt: Math.sqrt, cbrt: Math.cbrt, abs: Math.abs, exp: Math.exp,
+  log: Math.log, log10: Math.log10, log2: Math.log2, ln: Math.log,
+  sin: Math.sin, cos: Math.cos, tan: Math.tan,
+  asin: Math.asin, acos: Math.acos, atan: Math.atan, atan2: Math.atan2,
+  sinh: Math.sinh, cosh: Math.cosh, tanh: Math.tanh,
+  floor: Math.floor, ceil: Math.ceil, round: Math.round, sign: Math.sign,
+  pow: Math.pow, min: Math.min, max: Math.max, trunc: Math.trunc,
+}
+const FORMULA_CONSTS: Record<string, number> = { pi: Math.PI, e: Math.E, PI: Math.PI, E: Math.E }
+
+/**
+ * Compile a formula string into a function of the given column values.
+ * Only the supplied column names, whitelisted math functions and constants,
+ * numeric literals and arithmetic operators are permitted — anything else
+ * (e.g. `window`, `fetch`) throws, so the generated function is safe.
+ */
+function buildFormula(formula: string, cols: string[]): (vals: number[]) => number {
+  const idents = formula.match(/[A-Za-z_$][A-Za-z0-9_$]*/g) ?? []
+  const colSet = new Set(cols)
+  for (const id of idents) {
+    if (colSet.has(id) || id in FORMULA_FUNCS || id in FORMULA_CONSTS) continue
+    if (id in FORMULA_FUNCS) continue
+    throw new Error(`Unknown name "${id}" — use columns (${cols.join(', ') || 'none'}) or math functions.`)
+  }
+  const fnNames = Object.keys(FORMULA_FUNCS)
+  const constNames = Object.keys(FORMULA_CONSTS)
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-new-func
+  const compiled = new Function(
+    ...cols, ...fnNames, ...constNames,
+    `"use strict"; return (${formula});`,
+  ) as (...a: number[]) => number
+  const fnVals = fnNames.map(n => FORMULA_FUNCS[n] as unknown as number)
+  const constVals = constNames.map(n => FORMULA_CONSTS[n])
+  return (vals: number[]) => {
+    const out = compiled(...vals, ...fnVals, ...constVals)
+    return typeof out === 'number' ? out : NaN
+  }
 }

@@ -42,9 +42,19 @@ export function RegressionDetail({ fit }: { fit: FitRegressionResponse }) {
 
   const names = fit.feature_names
   const coefs = fit.coefficients
+  const ciPct = Math.round((fit.CI ?? 0.95) * 100)
+  const classMap = logit?.class_mapping
 
   return (
     <div className="flex flex-col gap-4">
+      {/* Class encoding note for label-encoded string targets */}
+      {classMap && (
+        <p className="text-[11px] text-gray-600 bg-gray-50 border border-gray-200 rounded px-3 py-1.5">
+          Target encoded: <span className="font-mono">0 = {classMap['0']}</span>,{' '}
+          <span className="font-mono">1 = {classMap['1']}</span>. Coefficients model the
+          probability of class&nbsp;1 (<span className="font-medium">{classMap['1']}</span>).
+        </p>
+      )}
       {/* Metric cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {isLogistic ? (
@@ -79,7 +89,7 @@ export function RegressionDetail({ fit }: { fit: FitRegressionResponse }) {
                 {inf && <th className="px-3 py-1.5 text-right font-medium">t</th>}
                 {logit && <th className="px-3 py-1.5 text-right font-medium">z</th>}
                 {(inf || logit) && <th className="px-3 py-1.5 text-right font-medium">p-value</th>}
-                {(inf || logit) && <th className="px-3 py-1.5 text-right font-medium">95% CI</th>}
+                {(inf || logit) && <th className="px-3 py-1.5 text-right font-medium">{ciPct}% CI</th>}
               </tr>
             </thead>
             <tbody>

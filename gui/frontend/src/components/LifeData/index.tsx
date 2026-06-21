@@ -688,6 +688,16 @@ export default function LifeData() {
     const n = parseInt(folio.spec.n, 10)
     if (isNaN(n) || n < 2 || n > 10000) { setError('Sample count must be 2–10000.'); return }
     const seed = parseInt(folio.spec.seed, 10)
+    // Warn before discarding existing data points in this folio.
+    const existing = folio.rows.filter(r => r.time.trim() !== '').length
+    if (existing > 0) {
+      const ok = window.confirm(
+        `This folio already contains ${existing} data point${existing !== 1 ? 's' : ''}. ` +
+        `Generating a new dataset will replace the existing data — this cannot be undone.\n\n` +
+        `Replace the current data?`
+      )
+      if (!ok) return
+    }
     setError(null)
     setLoading(true)
     try {

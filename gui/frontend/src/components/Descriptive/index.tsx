@@ -393,7 +393,7 @@ export default function Descriptive() {
         className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium py-2 rounded flex items-center justify-center gap-2 transition-colors"
       >
         <Play size={13} />
-        {loading ? 'Computing...' : 'Analyse'}
+        {loading ? 'Computing...' : 'Analyze'}
       </button>
 
       {error && (
@@ -432,7 +432,7 @@ export default function Descriptive() {
     <div className="p-4">
       {!summaryRes && (
         <p className="text-sm text-gray-400 mt-8 text-center">
-          Paste data and click Analyse to see statistics for each column.
+          Paste data and click Analyze to see statistics for each column.
         </p>
       )}
       {summaryRes && (
@@ -491,7 +491,7 @@ export default function Descriptive() {
     <div className="p-4 flex flex-col gap-4">
       {!histRes && (
         <p className="text-sm text-gray-400 mt-8 text-center">
-          Select a column and click Analyse to see the histogram.
+          Select a column and click Analyze to see the histogram.
         </p>
       )}
       {histRes && (
@@ -512,7 +512,7 @@ export default function Descriptive() {
     <div className="p-4 flex flex-col gap-4">
       {!boxRes && (
         <p className="text-sm text-gray-400 mt-8 text-center">
-          Click Analyse to compute boxplot statistics for the first column.
+          Click Analyze to compute boxplot statistics for the first column.
         </p>
       )}
       {boxRes && (
@@ -554,7 +554,7 @@ export default function Descriptive() {
     <div className="p-4 flex flex-col gap-4">
       {!runRes && (
         <p className="text-sm text-gray-400 mt-8 text-center">
-          Click Analyse to compute run chart statistics for the first column.
+          Click Analyze to compute run chart statistics for the first column.
         </p>
       )}
       {runRes && (
@@ -598,7 +598,7 @@ export default function Descriptive() {
     <div className="p-4 flex flex-col gap-4">
       {!freqRes && (
         <p className="text-sm text-gray-400 mt-8 text-center">
-          Select a column and click Analyse to build the frequency table.
+          Select a column and click Analyze to build the frequency table.
         </p>
       )}
       {freqRes && (
@@ -647,7 +647,7 @@ export default function Descriptive() {
       )}
       {headers.length >= 2 && !ctRes && (
         <p className="text-sm text-gray-400 mt-8 text-center">
-          Select row/column variables and click Analyse.
+          Select row/column variables and click Analyze.
         </p>
       )}
       {ctRes && (

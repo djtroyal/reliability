@@ -50,6 +50,7 @@ export interface DistPlotData {
     scatter_y: number[]
     line_x: number[]
     line_y: number[]
+    line_x_raw?: number[]
     line_lower?: number[]
     line_upper?: number[]
     x_label: string

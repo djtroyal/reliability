@@ -69,6 +69,40 @@ const PLOT_LAYOUT_BASE: PlotlyLayout = {
 
 const GRID_COLOR = '#e5e7eb'
 
+/** Build a plain-English interpretation of a column's summary statistics. */
+function summaryInterpretation(st: import('../../api/descriptive').ColumnStats): string[] {
+  const notes: string[] = []
+  const { mean, median, std, skewness, kurtosis, coefficient_of_variation: cv, normality } = st
+  // Central tendency / skew from mean-vs-median and the skewness coefficient.
+  if (skewness != null) {
+    const dir = skewness > 0 ? 'right (a long upper tail)' : 'left (a long lower tail)'
+    if (Math.abs(skewness) < 0.5) notes.push('The distribution is approximately symmetric.')
+    else if (Math.abs(skewness) < 1) notes.push(`The distribution is moderately skewed to the ${dir}.`)
+    else notes.push(`The distribution is strongly skewed to the ${dir}; the median is a more robust center than the mean.`)
+  } else if (mean != null && median != null && std) {
+    if (Math.abs(mean - median) > 0.5 * std) notes.push('Mean and median differ noticeably, suggesting skew or outliers.')
+  }
+  // Spread.
+  if (cv != null && Number.isFinite(cv)) {
+    const cvPct = Math.abs(cv) * 100
+    if (cvPct < 15) notes.push(`Low relative variability (CV ≈ ${cvPct.toFixed(0)}%): values cluster tightly around the mean.`)
+    else if (cvPct > 50) notes.push(`High relative variability (CV ≈ ${cvPct.toFixed(0)}%): values are widely dispersed.`)
+  }
+  // Tails.
+  if (kurtosis != null) {
+    if (kurtosis > 1) notes.push('Heavy tails / sharp peak (excess kurtosis > 1): outliers are more likely than under a normal model.')
+    else if (kurtosis < -1) notes.push('Light tails / flat shape (excess kurtosis < −1).')
+  }
+  // Normality.
+  if (normality && normality.p != null) {
+    notes.push(normality.p < 0.05
+      ? `The ${normality.test} test rejects normality (p = ${normality.p.toExponential(2)}); prefer non-parametric or robust methods.`
+      : `The ${normality.test} test does not reject normality (p = ${normality.p.toFixed(3)}); a normal model is reasonable.`)
+  }
+  if (notes.length === 0) notes.push('No notable departures from a typical, symmetric spread were detected.')
+  return notes
+}
+
 const fmt = (v: number | null | undefined): string =>
   v == null ? '—'
     : Math.abs(v) === 0 ? '0'
@@ -484,6 +518,12 @@ export default function Descriptive() {
                       }
                     </div>
                   )}
+                  <div className="mt-1.5 pt-1.5 border-t border-gray-100">
+                    <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-0.5">Interpretation</p>
+                    <ul className="text-[11px] text-gray-600 leading-snug list-disc pl-4 space-y-0.5">
+                      {summaryInterpretation(st).map((n, i) => <li key={i}>{n}</li>)}
+                    </ul>
+                  </div>
                 </div>
               )}
             </div>

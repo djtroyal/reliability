@@ -1,4 +1,4 @@
-import { useRef } from 'react'
+import { useRef, useState, useMemo } from 'react'
 import { Trash2 } from 'lucide-react'
 
 export interface DataColumn {
@@ -27,6 +27,27 @@ export default function DataTable({
   maxBodyHeight?: string
 }) {
   const ref = useRef<HTMLDivElement>(null)
+  const [sortCol, setSortCol] = useState<string | null>(null)
+  const [sortDir, setSortDir] = useState<'asc' | 'desc' | null>(null)
+
+  const toggleSort = (key: string) => {
+    if (sortCol !== key) { setSortCol(key); setSortDir('asc') }
+    else if (sortDir === 'asc') setSortDir('desc')
+    else { setSortCol(null); setSortDir(null) }
+  }
+
+  const sortedIndices = useMemo(() => {
+    const indices = rows.map((_, i) => i)
+    if (!sortCol || !sortDir) return indices
+    return indices.sort((a, b) => {
+      const va = rows[a][sortCol] ?? ''
+      const vb = rows[b][sortCol] ?? ''
+      const na = parseFloat(va), nb = parseFloat(vb)
+      const cmp = (!isNaN(na) && !isNaN(nb)) ? na - nb : va.localeCompare(vb)
+      return sortDir === 'asc' ? cmp : -cmp
+    })
+  }, [rows, sortCol, sortDir])
+
   const emptyRow = (): Record<string, string> =>
     Object.fromEntries(columns.map(c => [c.key, '']))
 
@@ -89,14 +110,18 @@ export default function DataTable({
             <tr>
               {showRowNumbers && <th className="px-2 py-1.5 text-left font-medium text-gray-400 w-8">#</th>}
               {columns.map(col => (
-                <th key={col.key} className="px-2 py-1.5 text-left font-medium text-gray-500"
-                  style={{ width: col.width }}>{col.label}</th>
+                <th key={col.key} className="px-2 py-1.5 text-left font-medium text-gray-500 select-none cursor-pointer hover:text-blue-600"
+                  style={{ width: col.width }} onClick={() => toggleSort(col.key)}>
+                  {col.label} <span className="text-[10px]">{sortCol === col.key ? (sortDir === 'asc' ? '▲' : '▼') : ''}</span>
+                </th>
               ))}
               <th className="w-7" />
             </tr>
           </thead>
           <tbody>
-            {rows.map((row, r) => (
+            {sortedIndices.map(r => {
+              const row = rows[r]
+              return (
               <tr key={r} className="border-t border-gray-100 group">
                 {showRowNumbers && <td className="px-2 py-0.5 text-gray-300 tabular-nums">{r + 1}</td>}
                 {columns.map((col, c) => (
@@ -129,7 +154,8 @@ export default function DataTable({
                   </button>
                 </td>
               </tr>
-            ))}
+              )
+            })}
           </tbody>
         </table>
       </div>

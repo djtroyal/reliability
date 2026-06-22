@@ -1,4 +1,4 @@
-import { useRef } from 'react'
+import { useRef, useState, useMemo } from 'react'
 import { Trash2, Plus, X } from 'lucide-react'
 
 export type GridRow = Record<string, string>
@@ -18,6 +18,27 @@ export default function ModelDataGrid({
   maxBodyHeight?: string
 }) {
   const ref = useRef<HTMLDivElement>(null)
+  const [sortCol, setSortCol] = useState<string | null>(null)
+  const [sortDir, setSortDir] = useState<'asc' | 'desc' | null>(null)
+
+  const toggleSort = (col: string) => {
+    if (sortCol !== col) { setSortCol(col); setSortDir('asc') }
+    else if (sortDir === 'asc') setSortDir('desc')
+    else { setSortCol(null); setSortDir(null) }
+  }
+
+  const sortedIndices = useMemo(() => {
+    const indices = rows.map((_, i) => i)
+    if (!sortCol || !sortDir) return indices
+    return indices.sort((a, b) => {
+      const va = rows[a][sortCol] ?? ''
+      const vb = rows[b][sortCol] ?? ''
+      const na = parseFloat(va), nb = parseFloat(vb)
+      const cmp = (!isNaN(na) && !isNaN(nb)) ? na - nb : va.localeCompare(vb)
+      return sortDir === 'asc' ? cmp : -cmp
+    })
+  }, [rows, sortCol, sortDir])
+
   const emptyRow = (cols = columns): GridRow => Object.fromEntries(cols.map(c => [c, '']))
 
   const setCell = (r: number, key: string, value: string) =>
@@ -114,6 +135,10 @@ export default function ModelDataGrid({
                       className="w-full min-w-0 text-xs font-semibold text-gray-700 bg-transparent px-1 py-0.5 rounded focus:outline-none focus:ring-1 focus:ring-blue-400"
                       title="Rename column"
                     />
+                    <button tabIndex={-1} onClick={() => toggleSort(col)} title="Sort column"
+                      className="text-gray-400 hover:text-blue-600 flex-shrink-0 text-[10px] leading-none px-0.5">
+                      {sortCol === col ? (sortDir === 'asc' ? '▲' : '▼') : '⇅'}
+                    </button>
                     {columns.length > 1 && (
                       <button tabIndex={-1} onClick={() => removeColumn(col)} title="Remove column"
                         className="text-gray-300 hover:text-red-500 flex-shrink-0">
@@ -132,7 +157,9 @@ export default function ModelDataGrid({
             </tr>
           </thead>
           <tbody>
-            {rows.map((row, r) => (
+            {sortedIndices.map(r => {
+              const row = rows[r]
+              return (
               <tr key={r} className="border-t border-gray-100 group">
                 <td className="px-1.5 py-0.5 text-gray-300 tabular-nums">{r + 1}</td>
                 {columns.map((col, c) => (
@@ -155,7 +182,8 @@ export default function ModelDataGrid({
                   </button>
                 </td>
               </tr>
-            ))}
+              )
+            })}
           </tbody>
         </table>
       </div>

@@ -104,8 +104,17 @@ let state: ProjectState = loadPersisted() ?? {
   modules: {},
 }
 
+// ---------------------------------------------------------------------------
+// Dirty (unsaved-changes) tracking
+// ---------------------------------------------------------------------------
+
+let _dirty = false
+export function markDirty() { _dirty = true }
+export function clearDirty() { _dirty = false }
+export function isDirty() { return _dirty }
+
 const listeners = new Set<() => void>()
-const emit = () => { persist(); listeners.forEach(l => l()) }
+const emit = () => { markDirty(); persist(); listeners.forEach(l => l()) }
 
 function subscribe(cb: () => void) {
   listeners.add(cb)
@@ -483,6 +492,7 @@ export function saveNamedProject(name: string) {
   writeProjectsMap(map)
   state = { ...state, projectName: trimmed }
   emit()
+  clearDirty()
 }
 
 /** Load a previously-saved project into the live store. */

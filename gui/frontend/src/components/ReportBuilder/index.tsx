@@ -4,7 +4,7 @@ import {
   GripVertical, Trash2, ChevronDown, Download, Upload, Save,
   Image as ImageIcon, Table as TableIcon, Plus, Loader,
   RefreshCw, ChevronRight, BarChart3, FolderOpen,
-  ArrowUp, ArrowDown, ChevronsUp, ChevronsDown,
+  ArrowUp, ArrowDown, ChevronsUp, ChevronsDown, X, Copy,
 } from 'lucide-react'
 import Plot from '../shared/ExportablePlot'
 // @ts-expect-error -- plotly.js-dist-min ships no TS declarations
@@ -62,16 +62,115 @@ interface PageFormat {
 
 const DEFAULT_FORMAT: PageFormat = { orientation: 'portrait', pageSize: 'a4', margin: 15 }
 
-interface ReportState {
+// ---------------------------------------------------------------------------
+// Header / Footer types  (Task #5)
+// ---------------------------------------------------------------------------
+
+interface HeaderFooter {
+  enabled: boolean
+  left: string
+  center: string
+  right: string
+  showDate: boolean
+  dateFormat: string   // e.g. 'YYYY-MM-DD', 'MM/DD/YYYY', 'DD/MM/YYYY'
+  showPageNumber: boolean
+  fontSize: number
+}
+
+const DEFAULT_HF: HeaderFooter = {
+  enabled: false,
+  left: '',
+  center: '',
+  right: '',
+  showDate: false,
+  dateFormat: 'YYYY-MM-DD',
+  showPageNumber: false,
+  fontSize: 8,
+}
+
+const DATE_FORMATS = ['YYYY-MM-DD', 'MM/DD/YYYY', 'DD/MM/YYYY'] as const
+
+function formatDate(fmt: string): string {
+  const d = new Date()
+  const yyyy = d.getFullYear().toString()
+  const mm = (d.getMonth() + 1).toString().padStart(2, '0')
+  const dd = d.getDate().toString().padStart(2, '0')
+  switch (fmt) {
+    case 'MM/DD/YYYY': return `${mm}/${dd}/${yyyy}`
+    case 'DD/MM/YYYY': return `${dd}/${mm}/${yyyy}`
+    default: return `${yyyy}-${mm}-${dd}`
+  }
+}
+
+/** Replace {date}, {page}, {pages} tokens. */
+function resolveTokens(text: string, dateFmt: string, page: number, pages: number): string {
+  return text
+    .replace(/\{date\}/g, formatDate(dateFmt))
+    .replace(/\{page\}/g, String(page))
+    .replace(/\{pages\}/g, String(pages))
+}
+
+// ---------------------------------------------------------------------------
+// Multi-report types  (Task #6)
+// ---------------------------------------------------------------------------
+
+interface SingleReport {
+  id: string
   title: string
   blocks: ReportBlock[]
   pageFormat?: PageFormat
-  /** Collapsed state of Project Assets groups, keyed by module/folio. UI-only;
-   *  intentionally not serialized into templates. */
+  header?: HeaderFooter
+  footer?: HeaderFooter
+}
+
+interface MultiReportState {
+  reports: SingleReport[]
+  activeReportId: string
+  /** Collapsed state of Project Assets groups, keyed by module/folio. UI-only. */
   collapsed?: Record<string, boolean>
 }
 
-const INITIAL: ReportState = { title: 'Untitled Report', blocks: [], pageFormat: DEFAULT_FORMAT }
+/** Legacy shape before multi-report migration. */
+interface LegacyReportState {
+  title: string
+  blocks: ReportBlock[]
+  pageFormat?: PageFormat
+  collapsed?: Record<string, boolean>
+}
+
+function makeReportId() { return `rpt_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}` }
+
+function newSingleReport(title = 'Untitled Report'): SingleReport {
+  return { id: makeReportId(), title, blocks: [], pageFormat: DEFAULT_FORMAT }
+}
+
+const INITIAL_MULTI: MultiReportState = (() => {
+  const r = newSingleReport()
+  return { reports: [r], activeReportId: r.id }
+})()
+
+/**
+ * Migrate old single-report state to the new multi-report shape.
+ * If the stored value already has `reports` array, return it as-is.
+ */
+function migrateState(raw: MultiReportState | LegacyReportState): MultiReportState {
+  if ('reports' in raw && Array.isArray(raw.reports)) {
+    return raw as MultiReportState
+  }
+  // Legacy shape
+  const legacy = raw as LegacyReportState
+  const r: SingleReport = {
+    id: makeReportId(),
+    title: legacy.title || 'Untitled Report',
+    blocks: legacy.blocks ?? [],
+    pageFormat: legacy.pageFormat ?? DEFAULT_FORMAT,
+  }
+  return {
+    reports: [r],
+    activeReportId: r.id,
+    collapsed: legacy.collapsed,
+  }
+}
 
 let seq = 0
 const newId = () => `rb_${Date.now().toString(36)}_${(seq++).toString(36)}`
@@ -81,11 +180,11 @@ function escHtml(s: string) {
 }
 
 // ---------------------------------------------------------------------------
-// PDF Export (block-by-block rendering for crisp output)
+// PDF Export  (block-by-block rendering, with header/footer)
 // ---------------------------------------------------------------------------
 
-async function exportPDF(state: ReportState) {
-  const pf = state.pageFormat ?? DEFAULT_FORMAT
+async function exportPDF(report: SingleReport) {
+  const pf = report.pageFormat ?? DEFAULT_FORMAT
   const orient = pf.orientation === 'landscape' ? 'l' : 'p'
   const sz = PAGE_SIZES[pf.pageSize] ?? PAGE_SIZES.a4
   const pdf = new jsPDF(orient, 'mm', [sz.w, sz.h])
@@ -93,23 +192,33 @@ async function exportPDF(state: ReportState) {
   const ph = pdf.internal.pageSize.getHeight()
   const m = pf.margin
   const cw = pw - 2 * m
-  let y = m
 
-  const newPage = () => { pdf.addPage(); y = m }
-  const ensureSpace = (needed: number) => { if (y + needed > ph - m) newPage() }
+  const hdr = report.header ?? DEFAULT_HF
+  const ftr = report.footer ?? DEFAULT_HF
+
+  // Reserve vertical space for header/footer
+  const headerH = hdr.enabled ? hdr.fontSize * 0.5 + 4 : 0
+  const footerH = ftr.enabled ? ftr.fontSize * 0.5 + 4 : 0
+  const topY = m + headerH
+  const bottomY = ph - m - footerH
+
+  let y = topY
+
+  const newPage = () => { pdf.addPage(); y = topY }
+  const ensureSpace = (needed: number) => { if (y + needed > bottomY) newPage() }
 
   // Title
   pdf.setFontSize(22)
   pdf.setFont('helvetica', 'bold')
   pdf.setTextColor(30, 64, 175)
-  pdf.text(state.title || 'Report', m, y + 7)
+  pdf.text(report.title || 'Report', m, y + 7)
   y += 12
   pdf.setDrawColor(59, 130, 246)
   pdf.setLineWidth(0.5)
   pdf.line(m, y, m + cw, y)
   y += 8
 
-  for (const block of state.blocks) {
+  for (const block of report.blocks) {
     switch (block.type) {
       case 'heading': {
         const sz = block.level === 1 ? 16 : block.level === 2 ? 13 : 11
@@ -140,14 +249,12 @@ async function exportPDF(state: ReportState) {
         break
       }
       case 'plot': {
-        // Preserve the 8:5 render aspect ratio across page sizes/orientation,
-        // clamping the height to what's left on the page.
         const aspect = 500 / 800
-        const avail = ph - 2 * m
+        const avail = bottomY - topY
         let plotH = Math.min(cw * aspect, avail)
         let plotW = plotH / aspect
         if (plotW > cw) { plotW = cw; plotH = cw * aspect }
-        if (y + plotH > ph - m) newPage()
+        if (y + plotH > bottomY) newPage()
         try {
           const rw = 800
           const rh = Math.round(rw * aspect)
@@ -177,7 +284,6 @@ async function exportPDF(state: ReportState) {
       }
       case 'table': {
         const colW = cw / Math.max(block.headers.length, 1)
-        // ~1.8 mm per char at 8pt; derive a cap from the actual column width.
         const maxChars = Math.max(4, Math.floor((colW - 2) / 1.8))
         ensureSpace(14)
         pdf.setFillColor(241, 245, 249)
@@ -240,28 +346,68 @@ async function exportPDF(state: ReportState) {
     }
   }
 
-  // Page numbers
+  // Header / footer on every page
   const pages = (pdf as AnyLayout).internal.getNumberOfPages()
   for (let i = 1; i <= pages; i++) {
     pdf.setPage(i)
-    pdf.setFontSize(8)
-    pdf.setFont('helvetica', 'normal')
-    pdf.setTextColor(148, 163, 184)
-    pdf.text(
-      `Generated by Perdura  ·  Page ${i} of ${pages}`,
-      m, ph - 6,
-    )
+
+    // Header
+    if (hdr.enabled) {
+      pdf.setFontSize(hdr.fontSize)
+      pdf.setFont('helvetica', 'normal')
+      pdf.setTextColor(100, 116, 139)
+      const hY = m + hdr.fontSize * 0.35
+      const leftTxt = resolveTokens(hdr.left, hdr.dateFormat, i, pages)
+      const centerTxt = resolveTokens(hdr.center, hdr.dateFormat, i, pages)
+      const rightTxt = resolveTokens(hdr.right, hdr.dateFormat, i, pages)
+      if (leftTxt) pdf.text(leftTxt, m, hY)
+      if (centerTxt) pdf.text(centerTxt, pw / 2, hY, { align: 'center' })
+      if (rightTxt) pdf.text(rightTxt, pw - m, hY, { align: 'right' })
+      // Separator line
+      pdf.setDrawColor(203, 213, 225)
+      pdf.setLineWidth(0.2)
+      pdf.line(m, m + hdr.fontSize * 0.5 + 1, pw - m, m + hdr.fontSize * 0.5 + 1)
+    }
+
+    // Footer
+    if (ftr.enabled) {
+      pdf.setFontSize(ftr.fontSize)
+      pdf.setFont('helvetica', 'normal')
+      pdf.setTextColor(100, 116, 139)
+      const fY = ph - m - 1
+      const leftTxt = resolveTokens(ftr.left, ftr.dateFormat, i, pages)
+      const centerTxt = resolveTokens(ftr.center, ftr.dateFormat, i, pages)
+      const rightTxt = resolveTokens(ftr.right, ftr.dateFormat, i, pages)
+      // Separator line
+      pdf.setDrawColor(203, 213, 225)
+      pdf.setLineWidth(0.2)
+      pdf.line(m, ph - m - ftr.fontSize * 0.5 - 2, pw - m, ph - m - ftr.fontSize * 0.5 - 2)
+      if (leftTxt) pdf.text(leftTxt, m, fY)
+      if (centerTxt) pdf.text(centerTxt, pw / 2, fY, { align: 'center' })
+      if (rightTxt) pdf.text(rightTxt, pw - m, fY, { align: 'right' })
+    }
+
+    // Default page-number line when footer is not used
+    if (!ftr.enabled) {
+      pdf.setFontSize(8)
+      pdf.setFont('helvetica', 'normal')
+      pdf.setTextColor(148, 163, 184)
+      pdf.text(
+        `Generated by Perdura  ·  Page ${i} of ${pages}`,
+        m, ph - 6,
+      )
+    }
   }
 
-  pdf.save(`${state.title || 'report'}.pdf`)
+  pdf.save(`${report.title || 'report'}.pdf`)
 }
 
 // ---------------------------------------------------------------------------
 // HTML Export (interactive Plotly charts)
 // ---------------------------------------------------------------------------
 
-function exportHTML(state: ReportState) {
-  const blocks = state.blocks.map(b => {
+function exportHTML(report: SingleReport) {
+  const blocks = report.blocks.map(b => {
     switch (b.type) {
       case 'heading': {
         const tag = `h${b.level}`
@@ -303,14 +449,14 @@ function exportHTML(state: ReportState) {
     }
   }).join('\n')
 
-  const pf = state.pageFormat ?? DEFAULT_FORMAT
+  const pf = report.pageFormat ?? DEFAULT_FORMAT
   const szInfo = PAGE_SIZES[pf.pageSize] ?? PAGE_SIZES.a4
   const printW = pf.orientation === 'landscape' ? szInfo.h : szInfo.w
   const printH = pf.orientation === 'landscape' ? szInfo.w : szInfo.h
 
   const html = [
     '<!DOCTYPE html><html><head><meta charset="utf-8">',
-    `<title>${escHtml(state.title)}</title>`,
+    `<title>${escHtml(report.title)}</title>`,
     '<script src="https://cdn.plot.ly/plotly-2.35.0.min.js" charset="utf-8"></' + 'script>',
     `<style>
 @page{size:${printW}mm ${printH}mm;margin:${pf.margin}mm}
@@ -335,7 +481,7 @@ footer{margin-top:48px;padding-top:12px;border-top:1px solid #e2e8f0;font-size:1
 @media print{.pagebreak{page-break-after:always}}
 </style>`,
     '</head><body>',
-    `<h1>${escHtml(state.title)}</h1>`,
+    `<h1>${escHtml(report.title)}</h1>`,
     blocks,
     '<footer>Generated by Perdura — Reliability Engineering and Statistics Suite</footer>',
     '</body></html>',
@@ -344,7 +490,7 @@ footer{margin-top:48px;padding-top:12px;border-top:1px solid #e2e8f0;font-size:1
   const blob = new Blob([html], { type: 'text/html' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
-  a.href = url; a.download = `${state.title || 'report'}.html`; a.click()
+  a.href = url; a.download = `${report.title || 'report'}.html`; a.click()
   URL.revokeObjectURL(url)
 }
 
@@ -354,16 +500,25 @@ footer{margin-top:48px;padding-top:12px;border-top:1px solid #e2e8f0;font-size:1
 
 const TPL_KEY = 'perdura_report_templates'
 
-interface SavedTemplate { name: string; title: string; blocks: ReportBlock[]; pageFormat?: PageFormat; savedAt: number }
+interface SavedTemplate {
+  name: string; title: string; blocks: ReportBlock[]
+  pageFormat?: PageFormat; header?: HeaderFooter; footer?: HeaderFooter
+  savedAt: number
+}
 
 function getTemplates(): SavedTemplate[] {
   try { return JSON.parse(localStorage.getItem(TPL_KEY) || '[]') }
   catch { return [] }
 }
 
-function saveTemplateToStorage(name: string, state: ReportState) {
+function saveTemplateToStorage(name: string, report: SingleReport) {
   const tpls = getTemplates()
-  tpls.push({ name, title: state.title, blocks: state.blocks, pageFormat: state.pageFormat ?? DEFAULT_FORMAT, savedAt: Date.now() })
+  tpls.push({
+    name, title: report.title, blocks: report.blocks,
+    pageFormat: report.pageFormat ?? DEFAULT_FORMAT,
+    header: report.header, footer: report.footer,
+    savedAt: Date.now(),
+  })
   localStorage.setItem(TPL_KEY, JSON.stringify(tpls))
 }
 
@@ -378,20 +533,65 @@ function deleteTemplateFromStorage(idx: number) {
 // ---------------------------------------------------------------------------
 
 export default function ReportBuilder() {
-  const [state, setState] = useModuleState<ReportState>('reportBuilder', INITIAL)
+  // Use multi-report state, with migration from legacy single-report shape
+  const [rawState, setRawState] = useModuleState<MultiReportState>('reportBuilder', INITIAL_MULTI)
+  const state = useMemo(() => migrateState(rawState as MultiReportState | LegacyReportState), [rawState])
+  const setState = useCallback((updater: MultiReportState | ((prev: MultiReportState) => MultiReportState)) => {
+    if (typeof updater === 'function') {
+      setRawState(prev => {
+        const migrated = migrateState(prev as MultiReportState | LegacyReportState)
+        return updater(migrated)
+      })
+    } else {
+      setRawState(updater)
+    }
+  }, [setRawState])
+
+  // Persist migration on first render if shape changed
+  useMemo(() => {
+    if (!('reports' in (rawState as unknown as Record<string, unknown>))) {
+      setState(state)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const reportRef = useRef<HTMLDivElement>(null)
   const [dragIdx, setDragIdx] = useState<number | null>(null)
   const [tplOpen, setTplOpen] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [tplVer, setTplVer] = useState(0)
+  const [hfOpen, setHfOpen] = useState(false)
   const templates = getTemplates()
   void tplVer
 
-  // --- Page format ---
-  const fmt_ = state.pageFormat ?? DEFAULT_FORMAT
-  const patchFormat = useCallback((p: Partial<PageFormat>) => {
-    setState(s => ({ ...s, pageFormat: { ...(s.pageFormat ?? DEFAULT_FORMAT), ...p } }))
+  // --- Active report ---
+  const activeReport = useMemo(
+    () => state.reports.find(r => r.id === state.activeReportId) ?? state.reports[0],
+    [state],
+  )
+  const activeId = activeReport?.id ?? ''
+
+  /** Update only the active report inside the multi-report state. */
+  const patchReport = useCallback((fn: (r: SingleReport) => SingleReport) => {
+    setState(s => ({
+      ...s,
+      reports: s.reports.map(r => r.id === s.activeReportId ? fn(r) : r),
+    }))
   }, [setState])
+
+  // --- Page format ---
+  const fmt_ = activeReport?.pageFormat ?? DEFAULT_FORMAT
+  const patchFormat = useCallback((p: Partial<PageFormat>) => {
+    patchReport(r => ({ ...r, pageFormat: { ...(r.pageFormat ?? DEFAULT_FORMAT), ...p } }))
+  }, [patchReport])
+
+  // --- Header / Footer helpers ---
+  const patchHeader = useCallback((p: Partial<HeaderFooter>) => {
+    patchReport(r => ({ ...r, header: { ...(r.header ?? DEFAULT_HF), ...p } }))
+  }, [patchReport])
+  const patchFooter = useCallback((p: Partial<HeaderFooter>) => {
+    patchReport(r => ({ ...r, footer: { ...(r.footer ?? DEFAULT_HF), ...p } }))
+  }, [patchReport])
 
   // --- Asset enumeration ---
   const [assetVer, setAssetVer] = useState(0)
@@ -399,7 +599,6 @@ export default function ReportBuilder() {
   void assetVer
   const refreshAssets = useCallback(() => setAssetVer(v => v + 1), [])
 
-  // Two-level grouping: module → folio/analysis → assets.
   const grouped = useMemo(() => {
     const map = new Map<string, Map<string, AssetDescriptor[]>>()
     for (const a of assets) {
@@ -412,7 +611,6 @@ export default function ReportBuilder() {
     return map
   }, [assets])
 
-  // Collapsed state persisted in module store so it survives remounts/refresh.
   const collapsed = state.collapsed ?? {}
   const toggleGroup = useCallback((key: string) => {
     setState(s => {
@@ -421,30 +619,30 @@ export default function ReportBuilder() {
     })
   }, [setState])
 
-  // --- Block operations ---
+  // --- Block operations (operate on active report) ---
   const addBlock = useCallback((b: ReportBlock) => {
-    setState(s => ({ ...s, blocks: [...s.blocks, b] }))
-  }, [setState])
+    patchReport(r => ({ ...r, blocks: [...r.blocks, b] }))
+  }, [patchReport])
 
   const removeBlock = useCallback((id: string) => {
-    setState(s => ({ ...s, blocks: s.blocks.filter(b => b.id !== id) }))
-  }, [setState])
+    patchReport(r => ({ ...r, blocks: r.blocks.filter(b => b.id !== id) }))
+  }, [patchReport])
 
   const updateBlock = useCallback((id: string, patch: Partial<ReportBlock>) => {
-    setState(s => ({
-      ...s,
-      blocks: s.blocks.map(b => b.id === id ? { ...b, ...patch } as ReportBlock : b),
+    patchReport(r => ({
+      ...r,
+      blocks: r.blocks.map(b => b.id === id ? { ...b, ...patch } as ReportBlock : b),
     }))
-  }, [setState])
+  }, [patchReport])
 
   const moveBlock = useCallback((from: number, to: number) => {
-    setState(s => {
-      const b = [...s.blocks]
+    patchReport(r => {
+      const b = [...r.blocks]
       const [moved] = b.splice(from, 1)
       b.splice(to, 0, moved)
-      return { ...s, blocks: b }
+      return { ...r, blocks: b }
     })
-  }, [setState])
+  }, [patchReport])
 
   // --- Asset insertion ---
   const insertAsset = useCallback((a: AssetDescriptor) => {
@@ -470,13 +668,13 @@ export default function ReportBuilder() {
     }
   }, [addBlock])
 
-  // --- Refresh all asset-backed blocks with fresh data ---
+  // --- Refresh all asset-backed blocks ---
   const refreshBlocks = useCallback(() => {
     const freshAssets = enumerateAssets()
     const lookup = new Map(freshAssets.map(a => [a.id, a]))
-    setState(s => ({
-      ...s,
-      blocks: s.blocks.map(b => {
+    patchReport(r => ({
+      ...r,
+      blocks: r.blocks.map(b => {
         if (!('assetId' in b) || !b.assetId) return b
         const desc = lookup.get(b.assetId)
         if (!desc) return b
@@ -488,7 +686,7 @@ export default function ReportBuilder() {
       }),
     }))
     setAssetVer(v => v + 1)
-  }, [setState])
+  }, [patchReport])
 
   // --- Drag and drop ---
   const onDragStart = (i: number) => setDragIdx(i)
@@ -503,17 +701,70 @@ export default function ReportBuilder() {
 
   // --- Export ---
   const handlePDF = async () => {
+    if (!activeReport) return
     setExporting(true)
-    try { await exportPDF(state) }
+    try { await exportPDF(activeReport) }
     catch (e) { console.error('PDF export error:', e) }
     finally { setExporting(false) }
   }
 
-  // --- Templates ---
+  const handleExportAll = async () => {
+    setExporting(true)
+    try {
+      for (const r of state.reports) {
+        await exportPDF(r)
+      }
+    } catch (e) { console.error('Export-all error:', e) }
+    finally { setExporting(false) }
+  }
+
+  // --- Report tabs (Task #6) ---
+  const addReport = useCallback(() => {
+    const r = newSingleReport()
+    setState(s => ({
+      ...s,
+      reports: [...s.reports, r],
+      activeReportId: r.id,
+    }))
+  }, [setState])
+
+  const switchReport = useCallback((id: string) => {
+    setState(s => ({ ...s, activeReportId: id }))
+  }, [setState])
+
+  const deleteReport = useCallback((id: string) => {
+    setState(s => {
+      const target = s.reports.find(r => r.id === id)
+      if (target && target.blocks.length > 0) {
+        if (!window.confirm(`Delete report "${target.title}"? It has ${target.blocks.length} block(s).`)) return s
+      }
+      const remaining = s.reports.filter(r => r.id !== id)
+      if (remaining.length === 0) {
+        const fresh = newSingleReport()
+        return { ...s, reports: [fresh], activeReportId: fresh.id }
+      }
+      const newActive = s.activeReportId === id
+        ? remaining[0].id
+        : s.activeReportId
+      return { ...s, reports: remaining, activeReportId: newActive }
+    })
+  }, [setState])
+
+  const [renamingTabId, setRenamingTabId] = useState<string | null>(null)
+
+  const renameReport = useCallback((id: string, title: string) => {
+    setState(s => ({
+      ...s,
+      reports: s.reports.map(r => r.id === id ? { ...r, title } : r),
+    }))
+  }, [setState])
+
+  // --- Templates (now per-report) ---
   const handleSaveTpl = () => {
-    const name = window.prompt('Template name:', state.title)
+    if (!activeReport) return
+    const name = window.prompt('Template name:', activeReport.title)
     if (!name) return
-    saveTemplateToStorage(name, state)
+    saveTemplateToStorage(name, activeReport)
     setTplVer(v => v + 1)
     setTplOpen(false)
   }
@@ -521,7 +772,14 @@ export default function ReportBuilder() {
   const handleLoadTpl = (idx: number) => {
     const t = templates[idx]
     if (!t) return
-    setState(s => ({ title: t.title, blocks: t.blocks, pageFormat: t.pageFormat ?? s.pageFormat ?? DEFAULT_FORMAT, collapsed: s.collapsed }))
+    patchReport(r => ({
+      ...r,
+      title: t.title,
+      blocks: t.blocks,
+      pageFormat: t.pageFormat ?? r.pageFormat ?? DEFAULT_FORMAT,
+      header: t.header ?? r.header,
+      footer: t.footer ?? r.footer,
+    }))
     setTplOpen(false)
   }
 
@@ -533,11 +791,18 @@ export default function ReportBuilder() {
   }
 
   const handleExportTpl = () => {
-    const json = JSON.stringify({ title: state.title, blocks: state.blocks, pageFormat: state.pageFormat ?? DEFAULT_FORMAT }, null, 2)
+    if (!activeReport) return
+    const json = JSON.stringify({
+      title: activeReport.title,
+      blocks: activeReport.blocks,
+      pageFormat: activeReport.pageFormat ?? DEFAULT_FORMAT,
+      header: activeReport.header,
+      footer: activeReport.footer,
+    }, null, 2)
     const blob = new Blob([json], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
-    a.href = url; a.download = `${state.title || 'template'}.json`; a.click()
+    a.href = url; a.download = `${activeReport.title || 'template'}.json`; a.click()
     URL.revokeObjectURL(url)
     setTplOpen(false)
   }
@@ -553,7 +818,14 @@ export default function ReportBuilder() {
         try {
           const t = JSON.parse(reader.result as string)
           if (t.title && Array.isArray(t.blocks)) {
-            setState(s => ({ title: t.title, blocks: t.blocks, pageFormat: t.pageFormat ?? s.pageFormat ?? DEFAULT_FORMAT, collapsed: s.collapsed }))
+            patchReport(r => ({
+              ...r,
+              title: t.title,
+              blocks: t.blocks,
+              pageFormat: t.pageFormat ?? r.pageFormat ?? DEFAULT_FORMAT,
+              header: t.header ?? r.header,
+              footer: t.footer ?? r.footer,
+            }))
           }
         } catch { /* invalid */ }
       }
@@ -564,18 +836,75 @@ export default function ReportBuilder() {
   }
 
   const clearReport = () => {
-    if (!window.confirm('Clear all report contents?')) return
-    setState(INITIAL)
+    if (!window.confirm('Clear all blocks in the current report?')) return
+    patchReport(r => ({ ...r, blocks: [] }))
   }
+
+  const blocks = activeReport?.blocks ?? []
+  const headerCfg = activeReport?.header ?? DEFAULT_HF
+  const footerCfg = activeReport?.footer ?? DEFAULT_HF
 
   return (
     <div className="flex flex-col h-full">
+      {/* Report tabs bar (Task #6) */}
+      <div className="flex items-center gap-0 px-2 py-0 bg-gray-50 border-b border-gray-200 flex-shrink-0 overflow-x-auto">
+        {state.reports.map(r => {
+          const isActive = r.id === activeId
+          return (
+            <div
+              key={r.id}
+              className={`flex items-center gap-1 px-3 py-1.5 text-xs cursor-pointer border-b-2 transition-colors select-none ${
+                isActive
+                  ? 'border-blue-500 bg-white text-blue-700 font-medium'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-100'
+              }`}
+              onClick={() => switchReport(r.id)}
+              onDoubleClick={() => setRenamingTabId(r.id)}
+              onContextMenu={e => {
+                e.preventDefault()
+                deleteReport(r.id)
+              }}
+            >
+              {renamingTabId === r.id ? (
+                <input
+                  autoFocus
+                  value={r.title}
+                  onChange={e => renameReport(r.id, e.target.value)}
+                  onBlur={() => setRenamingTabId(null)}
+                  onKeyDown={e => { if (e.key === 'Enter') setRenamingTabId(null) }}
+                  className="text-xs bg-transparent border-b border-blue-400 focus:outline-none w-28 px-0.5"
+                  onClick={e => e.stopPropagation()}
+                />
+              ) : (
+                <span className="truncate max-w-[120px]">{r.title || 'Untitled'}</span>
+              )}
+              {state.reports.length > 1 && (
+                <button
+                  onClick={e => { e.stopPropagation(); deleteReport(r.id) }}
+                  className="ml-1 p-0.5 rounded hover:bg-red-100 hover:text-red-500 text-gray-300 transition-colors"
+                  title="Close report"
+                >
+                  <X size={10} />
+                </button>
+              )}
+            </div>
+          )
+        })}
+        <button
+          onClick={addReport}
+          className="flex items-center gap-1 px-2 py-1.5 text-xs text-gray-400 hover:text-blue-500 hover:bg-gray-100 rounded transition-colors ml-1"
+          title="New report"
+        >
+          <Plus size={12} />
+        </button>
+      </div>
+
       {/* Top bar */}
       <div className="flex items-center gap-3 px-4 py-2 bg-white border-b border-gray-200 flex-shrink-0">
         <FileText size={16} className="text-rose-500 flex-shrink-0" />
         <input
-          value={state.title}
-          onChange={e => setState(s => ({ ...s, title: e.target.value }))}
+          value={activeReport?.title ?? ''}
+          onChange={e => patchReport(r => ({ ...r, title: e.target.value }))}
           placeholder="Report title"
           className="text-sm font-semibold text-gray-800 bg-transparent border-b border-transparent hover:border-gray-300 focus:border-blue-400 focus:outline-none px-1 py-0.5 w-64"
         />
@@ -586,15 +915,23 @@ export default function ReportBuilder() {
           Clear
         </button>
 
-        <button onClick={handlePDF} disabled={exporting || state.blocks.length === 0}
+        <button onClick={handlePDF} disabled={exporting || blocks.length === 0}
           className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed">
           {exporting ? <Loader size={13} className="animate-spin" /> : <Download size={13} />}
           PDF
         </button>
-        <button onClick={() => exportHTML(state)} disabled={state.blocks.length === 0}
+        <button onClick={() => activeReport && exportHTML(activeReport)} disabled={blocks.length === 0}
           className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-emerald-600 text-white rounded hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed">
           <Download size={13} /> HTML
         </button>
+
+        {state.reports.length > 1 && (
+          <button onClick={handleExportAll} disabled={exporting}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-violet-600 text-white rounded hover:bg-violet-700 disabled:opacity-40 disabled:cursor-not-allowed">
+            {exporting ? <Loader size={13} className="animate-spin" /> : <Copy size={13} />}
+            Export All
+          </button>
+        )}
 
         {/* Templates dropdown */}
         <div className="relative">
@@ -696,6 +1033,39 @@ export default function ReportBuilder() {
             </div>
           </div>
 
+          {/* Header & Footer settings (Task #5) */}
+          <div>
+            <button
+              onClick={() => setHfOpen(o => !o)}
+              className="flex items-center gap-1 w-full text-left"
+            >
+              <ChevronRight
+                size={12}
+                className={`flex-shrink-0 text-gray-400 transition-transform ${hfOpen ? 'rotate-90' : ''}`}
+              />
+              <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Header &amp; Footer</p>
+            </button>
+            {hfOpen && (
+              <div className="mt-2 space-y-3">
+                <HeaderFooterPanel
+                  title="Header"
+                  value={headerCfg}
+                  onChange={patchHeader}
+                />
+                <HeaderFooterPanel
+                  title="Footer"
+                  value={footerCfg}
+                  onChange={patchFooter}
+                />
+                <p className="text-[9px] text-gray-400 leading-relaxed">
+                  Use <code className="bg-gray-100 px-0.5 rounded">{'{date}'}</code>,{' '}
+                  <code className="bg-gray-100 px-0.5 rounded">{'{page}'}</code>,{' '}
+                  <code className="bg-gray-100 px-0.5 rounded">{'{pages}'}</code> as tokens.
+                </p>
+              </div>
+            )}
+          </div>
+
           {/* Project assets */}
           <div className="flex-1 min-h-0 flex flex-col">
             <div className="flex items-center justify-between mb-2">
@@ -735,7 +1105,7 @@ export default function ReportBuilder() {
                       {!moduleCollapsed && (
                         <div className="ml-2 mt-0.5 mb-1 space-y-0.5">
                           {[...folios.entries()].map(([folioName, items]) => {
-                            const fKey = `${moduleLabel} ${folioName}`
+                            const fKey = `${moduleLabel} ${folioName}`
                             const fCollapsed = collapsed[fKey]
                             return (
                               <div key={fKey}>
@@ -790,13 +1160,15 @@ export default function ReportBuilder() {
               <li>Assets auto-populate from project analyses</li>
               <li>Click any asset to add it to the report</li>
               <li>Drag blocks to reorder</li>
+              <li>Click block labels to rename them</li>
+              <li>Use tabs to manage multiple reports</li>
               <li>Page breaks control PDF pagination</li>
               <li>HTML export keeps plots interactive</li>
             </ul>
           </div>
         </div>
 
-        {/* Report canvas — sized to the chosen page format (96 dpi preview) */}
+        {/* Report canvas */}
         <div className="flex-1 overflow-y-auto bg-gray-100 p-6">
           <div
             ref={reportRef}
@@ -807,15 +1179,25 @@ export default function ReportBuilder() {
               padding: Math.max(fmt_.margin * 3.7795, 16),
             }}
           >
+            {/* Header preview (Task #5) */}
+            {headerCfg.enabled && (
+              <div className="flex items-center justify-between text-gray-400 border-b border-gray-200 pb-1 mb-4"
+                style={{ fontSize: headerCfg.fontSize * 1.2 }}>
+                <span>{resolveTokens(headerCfg.left, headerCfg.dateFormat, 1, 1)}</span>
+                <span>{resolveTokens(headerCfg.center, headerCfg.dateFormat, 1, 1)}</span>
+                <span>{resolveTokens(headerCfg.right, headerCfg.dateFormat, 1, 1)}</span>
+              </div>
+            )}
+
             {/* Title */}
             <input
-              value={state.title}
-              onChange={e => setState(s => ({ ...s, title: e.target.value }))}
+              value={activeReport?.title ?? ''}
+              onChange={e => patchReport(r => ({ ...r, title: e.target.value }))}
               placeholder="Report Title"
               className="w-full text-2xl font-bold text-gray-900 border-b-2 border-blue-200 pb-2 mb-8 focus:outline-none focus:border-blue-500 bg-transparent"
             />
 
-            {state.blocks.length === 0 && (
+            {blocks.length === 0 && (
               <div className="text-center py-24 text-gray-400">
                 <FileText size={48} className="mx-auto mb-4 opacity-40" />
                 <p className="text-sm font-medium">Your report is empty</p>
@@ -826,9 +1208,9 @@ export default function ReportBuilder() {
               </div>
             )}
 
-            {state.blocks.map((block, idx) => {
+            {blocks.map((block, idx) => {
               const isFirst = idx === 0
-              const isLast = idx === state.blocks.length - 1
+              const isLast = idx === blocks.length - 1
               return (
                 <div
                   key={block.id}
@@ -859,7 +1241,7 @@ export default function ReportBuilder() {
                       className="p-0.5 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600 disabled:opacity-20 disabled:cursor-default">
                       <ArrowDown size={12} />
                     </button>
-                    <button onClick={() => moveBlock(idx, state.blocks.length - 1)} disabled={isLast} title="Move to bottom"
+                    <button onClick={() => moveBlock(idx, blocks.length - 1)} disabled={isLast} title="Move to bottom"
                       className="p-0.5 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600 disabled:opacity-20 disabled:cursor-default">
                       <ChevronsDown size={12} />
                     </button>
@@ -877,13 +1259,23 @@ export default function ReportBuilder() {
               )
             })}
 
-            {state.blocks.length > 0 && (
+            {blocks.length > 0 && (
               <div className="flex justify-center pt-4">
                 <button onClick={refreshBlocks}
                   className="flex items-center gap-1.5 text-[11px] text-gray-400 hover:text-blue-500 transition-colors"
                   title="Re-fetch data for all asset-backed blocks">
                   <RefreshCw size={11} /> Refresh live data
                 </button>
+              </div>
+            )}
+
+            {/* Footer preview (Task #5) */}
+            {footerCfg.enabled && (
+              <div className="flex items-center justify-between text-gray-400 border-t border-gray-200 pt-1 mt-4"
+                style={{ fontSize: footerCfg.fontSize * 1.2 }}>
+                <span>{resolveTokens(footerCfg.left, footerCfg.dateFormat, 1, 1)}</span>
+                <span>{resolveTokens(footerCfg.center, footerCfg.dateFormat, 1, 1)}</span>
+                <span>{resolveTokens(footerCfg.right, footerCfg.dateFormat, 1, 1)}</span>
               </div>
             )}
           </div>
@@ -905,6 +1297,146 @@ function PaletteBtn({ icon, label, onClick }: { icon: React.ReactNode; label: st
     </button>
   )
 }
+
+// ---------------------------------------------------------------------------
+// Header & Footer panel for sidebar (Task #5)
+// ---------------------------------------------------------------------------
+
+function HeaderFooterPanel({
+  title,
+  value,
+  onChange,
+}: {
+  title: string
+  value: HeaderFooter
+  onChange: (p: Partial<HeaderFooter>) => void
+}) {
+  return (
+    <div className="border border-gray-200 rounded p-2 space-y-1.5">
+      <label className="flex items-center gap-1.5 text-[10px] font-medium text-gray-600 cursor-pointer">
+        <input
+          type="checkbox"
+          checked={value.enabled}
+          onChange={e => onChange({ enabled: e.target.checked })}
+          className="accent-blue-500"
+        />
+        {title}
+      </label>
+      {value.enabled && (
+        <>
+          <div className="grid grid-cols-3 gap-1">
+            <div>
+              <label className="text-[9px] text-gray-400 block">Left</label>
+              <input
+                value={value.left}
+                onChange={e => onChange({ left: e.target.value })}
+                placeholder="e.g. {date}"
+                className="w-full text-[10px] border border-gray-200 rounded px-1 py-0.5 bg-white focus:outline-none focus:border-blue-400"
+              />
+            </div>
+            <div>
+              <label className="text-[9px] text-gray-400 block">Center</label>
+              <input
+                value={value.center}
+                onChange={e => onChange({ center: e.target.value })}
+                placeholder="Title"
+                className="w-full text-[10px] border border-gray-200 rounded px-1 py-0.5 bg-white focus:outline-none focus:border-blue-400"
+              />
+            </div>
+            <div>
+              <label className="text-[9px] text-gray-400 block">Right</label>
+              <input
+                value={value.right}
+                onChange={e => onChange({ right: e.target.value })}
+                placeholder="{page}/{pages}"
+                className="w-full text-[10px] border border-gray-200 rounded px-1 py-0.5 bg-white focus:outline-none focus:border-blue-400"
+              />
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <div>
+              <label className="text-[9px] text-gray-400 block">Date format</label>
+              <select
+                value={value.dateFormat}
+                onChange={e => onChange({ dateFormat: e.target.value })}
+                className="text-[10px] border border-gray-200 rounded px-1 py-0.5 bg-white focus:outline-none focus:border-blue-400"
+              >
+                {DATE_FORMATS.map(f => (
+                  <option key={f} value={f}>{f}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-[9px] text-gray-400 block">Font size</label>
+              <input
+                type="number" min={5} max={14} step={1}
+                value={value.fontSize}
+                onChange={e => onChange({ fontSize: Number(e.target.value) })}
+                className="w-12 text-[10px] border border-gray-200 rounded px-1 py-0.5 bg-white focus:outline-none focus:border-blue-400"
+              />
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Inline Editable Label sub-component  (Task #3)
+// ---------------------------------------------------------------------------
+
+function InlineEditableLabel({
+  value,
+  onChange,
+  className,
+}: {
+  value: string
+  onChange: (v: string) => void
+  className?: string
+}) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(value)
+
+  const startEdit = () => {
+    setDraft(value)
+    setEditing(true)
+  }
+
+  const commit = () => {
+    setEditing(false)
+    if (draft.trim() !== value) {
+      onChange(draft.trim() || value)
+    }
+  }
+
+  if (editing) {
+    return (
+      <input
+        autoFocus
+        value={draft}
+        onChange={e => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false) }}
+        className={`bg-white border border-blue-300 rounded px-1 py-0 focus:outline-none focus:border-blue-500 ${className ?? 'text-[10px] text-gray-500 font-medium'}`}
+      />
+    )
+  }
+
+  return (
+    <span
+      onClick={startEdit}
+      title="Click to rename"
+      className={`cursor-pointer hover:text-blue-500 hover:underline underline-offset-2 transition-colors ${className ?? 'text-[10px] text-gray-400 font-medium'}`}
+    >
+      {value}
+    </span>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Block Renderer (updated with inline editing - Task #3)
+// ---------------------------------------------------------------------------
 
 function BlockRenderer({ block, onChange }: { block: ReportBlock; onChange: (p: Partial<ReportBlock>) => void }) {
   switch (block.type) {
@@ -948,7 +1480,12 @@ function BlockRenderer({ block, onChange }: { block: ReportBlock; onChange: (p: 
     case 'plot':
       return (
         <div className="py-2">
-          <p className="text-[10px] text-gray-400 mb-1 font-medium px-1">{block.label}</p>
+          <div className="px-1 mb-1">
+            <InlineEditableLabel
+              value={block.label}
+              onChange={v => onChange({ label: v })}
+            />
+          </div>
           <div style={{ height: 400 }}>
             <Plot
               data={(block.plotData ?? []) as Plotly.Data[]}
@@ -969,7 +1506,12 @@ function BlockRenderer({ block, onChange }: { block: ReportBlock; onChange: (p: 
       return (
         <div className="py-2">
           {block.label && (
-            <p className="text-[10px] text-gray-400 mb-1 font-medium px-1">{block.label}</p>
+            <div className="px-1 mb-1">
+              <InlineEditableLabel
+                value={block.label}
+                onChange={v => onChange({ label: v })}
+              />
+            </div>
           )}
           <div className="overflow-x-auto rounded border border-gray-200">
             <table className="w-full text-xs">
@@ -998,7 +1540,12 @@ function BlockRenderer({ block, onChange }: { block: ReportBlock; onChange: (p: 
       return (
         <div className="py-2">
           {block.label && (
-            <p className="text-[10px] text-gray-400 mb-1 font-medium px-1">{block.label}</p>
+            <div className="px-1 mb-1">
+              <InlineEditableLabel
+                value={block.label}
+                onChange={v => onChange({ label: v })}
+              />
+            </div>
           )}
           <div className="bg-gray-50 rounded-lg border border-gray-200 px-4 py-3">
             <div className="grid grid-cols-2 gap-x-6 gap-y-1.5">

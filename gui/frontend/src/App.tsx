@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   LineChart, Thermometer, Network, Cpu, Atom, TrendingUp, ShieldCheck,
   FlaskConical, ScatterChart, Target, FolderKanban, FileText,
@@ -18,7 +18,7 @@ import ProjectBar from './components/shared/ProjectBar'
 import HelpButton from './components/shared/HelpButton'
 import Logo from './components/shared/Logo'
 import { ErrorBoundary } from './components/shared/ErrorBoundary'
-import { useProjectName } from './store/project'
+import { useProjectName, isDirty } from './store/project'
 import SkiGame from './components/easteregg/SkiGame'
 import { useSecretCode } from './components/easteregg/useSecretCode'
 
@@ -47,6 +47,16 @@ export default function App() {
   // Hidden Easter egg: ↑↑↓↓←→←→ B A, or type "yeti".
   const [skiOpen, setSkiOpen] = useState(false)
   useSecretCode(() => setSkiOpen(true))
+
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      if (isDirty()) {
+        e.preventDefault()
+      }
+    }
+    window.addEventListener('beforeunload', handler)
+    return () => window.removeEventListener('beforeunload', handler)
+  }, [])
 
   return (
     <div className="min-h-screen flex flex-col bg-gray-50">

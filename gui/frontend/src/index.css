@@ -12,17 +12,25 @@ body {
   font-size: 12px;
 }
 
-/* Keep the Plotly modebar (download / zoom icons) on a single row instead of
-   wrapping onto multiple rows on narrower plots. Forcing the bar to its
-   natural (max-content) width with no wrapping keeps every button clickable;
-   the bar is right-anchored, so it simply extends leftward over the plot when
-   hovered. (Plain layout is preserved, so button clicks behave normally.) */
+/* Keep the Plotly modebar (download / zoom icons) on a single horizontal row.
+   Plotly auto-switches the bar to a vertical (stacked) orientation when the
+   plot is too narrow to fit every button — which is what makes the icons
+   "spill onto a second row" and overlap the legend. Forcing row layout at its
+   natural (max-content) width with no wrapping keeps every button clickable on
+   one line; the bar is right-anchored, so it simply extends leftward when
+   shown. */
 .js-plotly-plot .modebar {
+  display: flex !important;
+  flex-direction: row !important;
+  flex-wrap: nowrap !important;
   white-space: nowrap !important;
   width: -moz-max-content;
   width: max-content !important;
   max-width: none !important;
 }
 .js-plotly-plot .modebar-group {
+  display: flex !important;
+  flex-direction: row !important;
+  flex-wrap: nowrap !important;
   white-space: nowrap !important;
 }

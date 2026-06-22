@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useMemo } from 'react'
 import Plot from '../shared/ExportablePlot'
 import { Play, Download, Trash2 } from 'lucide-react'
 import FileUpload from '../shared/FileUpload'
@@ -249,6 +249,15 @@ export default function ALT() {
   const [topView, setTopView] = useState<'alt' | 'testing'>('alt')
   const tableRef = useRef<HTMLDivElement>(null)
 
+  // Sort state for the data table (display-only)
+  const [altSortCol, setAltSortCol] = useState<string | null>(null)
+  const [altSortDir, setAltSortDir] = useState<'asc' | 'desc' | null>(null)
+  const toggleAltSort = (col: string) => {
+    if (altSortCol !== col) { setAltSortCol(col); setAltSortDir('asc') }
+    else if (altSortDir === 'asc') setAltSortDir('desc')
+    else { setAltSortCol(null); setAltSortDir(null) }
+  }
+
   // Rows: migrate from legacy comma-separated failure/stress text if present.
   const dataRows: ALTRow[] = s.dataRows ?? (() => {
     const f = failureText.split(/[\s,\n]+/).filter(Boolean)
@@ -256,6 +265,18 @@ export default function ALT() {
     const n = Math.max(f.length, st.length, 5)
     return Array.from({ length: n }, (_, i) => ({ time: f[i] ?? '', stress: st[i] ?? '' }))
   })()
+
+  const altSortedIndices = useMemo(() => {
+    const indices = dataRows.map((_, i) => i)
+    if (!altSortCol || !altSortDir) return indices
+    return indices.sort((a, b) => {
+      const va = dataRows[a][altSortCol as keyof ALTRow] ?? ''
+      const vb = dataRows[b][altSortCol as keyof ALTRow] ?? ''
+      const na = parseFloat(va), nb = parseFloat(vb)
+      const cmp = (!isNaN(na) && !isNaN(nb)) ? na - nb : va.localeCompare(vb)
+      return altSortDir === 'asc' ? cmp : -cmp
+    })
+  }, [dataRows, altSortCol, altSortDir])
 
   const setRows = (next: ALTRow[]) => patch({ dataRows: next, result: null })
   const updateRow = (idx: number, field: keyof ALTRow, val: string) =>
@@ -504,13 +525,17 @@ export default function ALT() {
                 <thead className="bg-gray-50 sticky top-0">
                   <tr>
                     <th className="px-2 py-1 text-left font-medium text-gray-500 w-7">#</th>
-                    <th className="px-2 py-1 text-left font-medium text-gray-500">Time ({units})</th>
-                    <th className="px-2 py-1 text-left font-medium text-gray-500">Stress</th>
+                    <th className="px-2 py-1 text-left font-medium text-gray-500 select-none cursor-pointer hover:text-blue-600"
+                      onClick={() => toggleAltSort('time')}>Time ({units}) {altSortCol === 'time' ? <span className="text-[10px]">{altSortDir === 'asc' ? '▲' : '▼'}</span> : ''}</th>
+                    <th className="px-2 py-1 text-left font-medium text-gray-500 select-none cursor-pointer hover:text-blue-600"
+                      onClick={() => toggleAltSort('stress')}>Stress {altSortCol === 'stress' ? <span className="text-[10px]">{altSortDir === 'asc' ? '▲' : '▼'}</span> : ''}</th>
                     <th className="w-7"></th>
                   </tr>
                 </thead>
                 <tbody>
-                  {dataRows.map((row, i) => (
+                  {altSortedIndices.map(i => {
+                    const row = dataRows[i]
+                    return (
                     <tr key={i} className="border-t border-gray-100 group">
                       <td className="px-2 py-0.5 text-gray-400 font-mono">{i + 1}</td>
                       <td className="px-1 py-0.5">
@@ -541,7 +566,8 @@ export default function ALT() {
                         </button>
                       </td>
                     </tr>
-                  ))}
+                    )
+                  })}
                 </tbody>
               </table>
             </div>

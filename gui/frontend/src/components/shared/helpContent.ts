@@ -274,8 +274,18 @@ export const HELP_CONTENT: Record<string, ModuleHelp> = {
   reportBuilder: {
     title: 'Report Builder',
     overview:
-      'Compose professional reports from your analysis results. All project assets — plots, tables, and key metrics — are automatically enumerated from every module. Export as PDF or interactive HTML.',
+      'Compose professional reports from your analysis results. All project assets — plots, tables, and key metrics — are automatically enumerated from every module. Manage multiple reports with tabs, configure headers and footers, and export as PDF or interactive HTML.',
     sections: [
+      {
+        heading: 'Multiple Reports',
+        items: [
+          'The tab bar at the top lets you manage multiple reports in the same project.',
+          'Click a tab to switch reports. Click "+" to create a new report.',
+          'Double-click a tab to rename the report. Right-click or use the "x" button to delete a report.',
+          '"Export All" exports every report as a separate PDF.',
+          'Templates save and load per-report (the active report).',
+        ],
+      },
       {
         heading: 'Project Assets',
         items: [
@@ -295,6 +305,15 @@ export const HELP_CONTENT: Record<string, ModuleHelp> = {
         ],
       },
       {
+        heading: 'Header & Footer',
+        items: [
+          'Enable custom headers and/or footers for each report from the collapsible panel in the sidebar.',
+          'Each has left, center, and right text fields. Use tokens: {date}, {page}, {pages}.',
+          'Choose a date format (YYYY-MM-DD, MM/DD/YYYY, DD/MM/YYYY) and font size.',
+          'Headers and footers appear on every page of the PDF export and in the preview canvas.',
+        ],
+      },
+      {
         heading: 'Building the Report',
         items: [
           { term: 'Heading', def: 'A section header with selectable level (H1/H2/H3). Click the level buttons to resize.' },
@@ -303,6 +322,7 @@ export const HELP_CONTENT: Record<string, ModuleHelp> = {
           { term: 'Divider', def: 'A horizontal rule to separate sections.' },
           { term: 'Page Break', def: 'Forces a new page in the PDF export.' },
           'Drag blocks by the grip handle to reorder. Hover over a block to reveal the delete button.',
+          'Click the label of a plot, table, or metrics block to rename it inline.',
         ],
       },
       {

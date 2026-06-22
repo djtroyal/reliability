@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useMemo } from 'react'
 import Plot from '../shared/ExportablePlot'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type PlotlyLayout = any
@@ -114,6 +114,8 @@ interface Folio {
   showSalient?: boolean
   /** Overlay right-censored (suspension) times on the plots. */
   showSuspensions?: boolean
+  /** Show a statistics annotation (fitted params + CI, F/S counts) on plots. */
+  showStats?: boolean
 }
 
 interface CompareState {
@@ -400,6 +402,15 @@ export default function LifeData() {
   const [calcResult, setCalcResult] = useState<CalculatorResponse | null>(null)
   const [calcLoading, setCalcLoading] = useState(false)
 
+  // Sort state for the data table (display-only)
+  const [ldSortCol, setLdSortCol] = useState<string | null>(null)
+  const [ldSortDir, setLdSortDir] = useState<'asc' | 'desc' | null>(null)
+  const toggleLdSort = (col: string) => {
+    if (ldSortCol !== col) { setLdSortCol(col); setLdSortDir('asc') }
+    else if (ldSortDir === 'asc') setLdSortDir('desc')
+    else { setLdSortCol(null); setLdSortDir(null) }
+  }
+
   const fileRef = useRef<HTMLInputElement>(null)
   const importFolioRef = useRef<HTMLInputElement>(null)
   const tableRef = useRef<HTMLDivElement>(null)
@@ -409,6 +420,22 @@ export default function LifeData() {
   // Per-folio overlay toggles (persisted on the folio).
   const showSalient = folio?.showSalient ?? false
   const showSuspensions = folio?.showSuspensions ?? false
+  const showStats = folio?.showStats ?? false
+
+  const ldSortedIndices = useMemo(() => {
+    const rows = folio?.rows ?? []
+    const indices = rows.map((_, i) => i)
+    if (!ldSortCol || !ldSortDir) return indices
+    return indices.sort((a, b) => {
+      let va: string, vb: string
+      if (ldSortCol === 'id') { va = String(a); vb = String(b) }
+      else if (ldSortCol === 'time') { va = rows[a].time; vb = rows[b].time }
+      else { va = rows[a].state; vb = rows[b].state }
+      const na = parseFloat(va), nb = parseFloat(vb)
+      const cmp = (!isNaN(na) && !isNaN(nb)) ? na - nb : va.localeCompare(vb)
+      return ldSortDir === 'asc' ? cmp : -cmp
+    })
+  }, [folio?.rows, ldSortCol, ldSortDir])
 
   const toggleView = (t: ViewTab, multi: boolean) => {
     setQuadView(false)
@@ -967,12 +994,52 @@ export default function LifeData() {
     return traces
   })()
 
+  const _PARAM_NAMES = ['eta', 'alpha', 'beta', 'gamma', 'mu', 'sigma', 'Lambda']
+  const selectedParams = (() => {
+    if (!fitResult) return null
+    const row = fitResult.results.find(r => r.Distribution === activeDist)
+    if (!row?.params) return null
+    const p = row.params
+    const prows = _PARAM_NAMES.filter(n => p[n] != null).map(n => ({
+      name: n,
+      value: p[n] as number,
+      se: (p[`${n}_se`] ?? null) as number | null,
+      lower: (p[`${n}_lower`] ?? null) as number | null,
+      upper: (p[`${n}_upper`] ?? null) as number | null,
+    }))
+    return { dist: row.Distribution, rows: prows }
+  })()
+
+  const statsAnnotations = (() => {
+    if (!showStats || !selectedParams) return []
+    const { failures, rc } = folioData(folio)
+    const fmt = (v: number) => v >= 1000 || v < 0.01 ? v.toExponential(3) : v.toPrecision(4)
+    const lines: string[] = []
+    for (const p of selectedParams.rows) {
+      let s = `${p.name} = ${fmt(p.value)}`
+      if (p.lower != null && p.upper != null) s += `  [${fmt(p.lower)}, ${fmt(p.upper)}]`
+      lines.push(s)
+    }
+    lines.push(`F = ${failures.length}  S = ${rc.length}`)
+    lines.push(`CI = ${ciPct}%`)
+    return [{
+      text: lines.join('<br>'),
+      xref: 'paper', yref: 'paper',
+      x: 0.02, y: -0.12,
+      xanchor: 'left', yanchor: 'top',
+      showarrow: false,
+      font: { size: 10, color: '#6b7280', family: 'monospace' },
+      align: 'left' as const,
+    }]
+  })()
+
   const probLayout = activePlot?.probability ? {
     xaxis: { title: { text: `${activePlot.probability.x_label} (${units})` }, gridcolor: '#e5e7eb' },
     yaxis: { title: { text: activePlot.probability.y_label }, gridcolor: '#e5e7eb' },
-    margin: { t: 30, r: 20, b: 50, l: 60 },
+    margin: { t: 30, r: 20, b: showStats ? 110 : 50, l: 60 },
     paper_bgcolor: 'white', plot_bgcolor: 'white',
     showlegend: true, legend: { x: 0.02, y: 0.98 },
+    ...(statsAnnotations.length > 0 ? { annotations: statsAnnotations } : {}),
   } : {}
 
   const primaryView = activeViews[0] ?? 'Probability'
@@ -1048,8 +1115,9 @@ export default function LifeData() {
   const curveLayout: PlotlyLayout = {
     xaxis: { title: { text: `Time (${units})` }, gridcolor: '#e5e7eb' },
     yaxis: { title: { text: curveTab }, gridcolor: '#e5e7eb' },
-    margin: { t: 30, r: 20, b: 50, l: 60 },
+    margin: { t: 30, r: 20, b: showStats ? 110 : 50, l: 60 },
     paper_bgcolor: 'white', plot_bgcolor: 'white',
+    ...(statsAnnotations.length > 0 ? { annotations: statsAnnotations } : {}),
   }
 
   // --- special model plots ---
@@ -1138,21 +1206,6 @@ export default function LifeData() {
     { key: 'LogLik', label: 'Log-Lik' },
   ]
 
-  const PARAM_NAMES = ['eta', 'alpha', 'beta', 'gamma', 'mu', 'sigma', 'Lambda']
-  const selectedParams = (() => {
-    if (!fitResult) return null
-    const row = fitResult.results.find(r => r.Distribution === activeDist)
-    if (!row?.params) return null
-    const p = row.params
-    const prows = PARAM_NAMES.filter(n => p[n] != null).map(n => ({
-      name: n,
-      value: p[n] as number,
-      se: (p[`${n}_se`] ?? null) as number | null,
-      lower: (p[`${n}_lower`] ?? null) as number | null,
-      upper: (p[`${n}_upper`] ?? null) as number | null,
-    }))
-    return { dist: row.Distribution, rows: prows }
-  })()
 
   // --- compare plot (supports multiple CI levels) ---
 
@@ -1755,14 +1808,19 @@ export default function LifeData() {
                     <table className="w-full text-xs">
                       <thead className="bg-gray-50 sticky top-0 z-10">
                         <tr>
-                          <th className="px-2 py-1.5 text-left font-medium text-gray-500 w-16">ID</th>
-                          <th className="px-2 py-1.5 text-left font-medium text-gray-500">Time ({units})</th>
-                          <th className="px-2 py-1.5 text-center font-medium text-gray-500 w-14">State</th>
+                          <th className="px-2 py-1.5 text-left font-medium text-gray-500 w-16 select-none cursor-pointer hover:text-blue-600"
+                            onClick={() => toggleLdSort('id')}>ID {ldSortCol === 'id' ? <span className="text-[10px]">{ldSortDir === 'asc' ? '▲' : '▼'}</span> : ''}</th>
+                          <th className="px-2 py-1.5 text-left font-medium text-gray-500 select-none cursor-pointer hover:text-blue-600"
+                            onClick={() => toggleLdSort('time')}>Time ({units}) {ldSortCol === 'time' ? <span className="text-[10px]">{ldSortDir === 'asc' ? '▲' : '▼'}</span> : ''}</th>
+                          <th className="px-2 py-1.5 text-center font-medium text-gray-500 w-14 select-none cursor-pointer hover:text-blue-600"
+                            onClick={() => toggleLdSort('state')}>State {ldSortCol === 'state' ? <span className="text-[10px]">{ldSortDir === 'asc' ? '▲' : '▼'}</span> : ''}</th>
                           <th className="w-7"></th>
                         </tr>
                       </thead>
                       <tbody>
-                        {folio.rows.map((row, i) => (
+                        {ldSortedIndices.map(i => {
+                          const row = folio.rows[i]
+                          return (
                           <tr key={row.key} className="border-t border-gray-100 group">
                             <td className="px-1 py-0.5">
                               <input
@@ -1805,7 +1863,8 @@ export default function LifeData() {
                               ><Trash2 size={11} /></button>
                             </td>
                           </tr>
-                        ))}
+                          )
+                        })}
                       </tbody>
                     </table>
                     </div>
@@ -2289,6 +2348,15 @@ export default function LifeData() {
                             onChange={e => setShowHistogram(e.target.checked)} />
                           Histogram
                         </label>
+                        <label
+                          className={`flex items-center gap-1 text-xs px-2 py-1 rounded border cursor-pointer transition-colors ${
+                            selectedParams ? 'text-gray-600 border-gray-200 hover:bg-gray-50' : 'text-gray-300 border-gray-100 cursor-not-allowed'
+                          }`}
+                          title="Show fitted parameters, F/S count, and CI bounds below the plot">
+                          <input type="checkbox" checked={showStats} disabled={!selectedParams}
+                            onChange={e => patchActive({ showStats: e.target.checked })} />
+                          Statistics
+                        </label>
                         <div>
                           <button onClick={downloadCSV}
                             className="flex items-center gap-1 text-xs text-gray-500 hover:text-blue-600 border border-gray-200 px-2 py-1 rounded">
@@ -2326,9 +2394,10 @@ export default function LifeData() {
                               layout={{
                                 xaxis: { title: { text: `Time (${units})` }, gridcolor: '#e5e7eb' },
                                 yaxis: { title: { text: v }, gridcolor: '#e5e7eb' },
-                                margin: { t: 30, r: 20, b: 50, l: 60 },
+                                margin: { t: 30, r: 20, b: showStats ? 110 : 50, l: 60 },
                                 paper_bgcolor: 'white', plot_bgcolor: 'white',
                                 title: { text: `${activeDist} — ${v}` },
+                                ...(statsAnnotations.length > 0 ? { annotations: statsAnnotations } : {}),
                               } as any}
                               config={{ responsive: true }}
                               style={{ width: '100%', flex: 1, minHeight: 0 }}

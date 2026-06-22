@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useMemo } from 'react'
 import Plot from '../shared/ExportablePlot'
 import { Play, Trash2 } from 'lucide-react'
 import { fitGrowth, GrowthResponse } from '../../api/client'
@@ -66,9 +66,27 @@ export default function Growth() {
   const [error, setError] = useState<string | null>(null)
   const [view, setView] = useState<GrowthView>('growth')
 
+  // Sort state for the data table (display-only)
+  const [grSortDir, setGrSortDir] = useState<'asc' | 'desc' | null>(null)
+  const toggleGrSort = () => {
+    if (grSortDir === null) setGrSortDir('asc')
+    else if (grSortDir === 'asc') setGrSortDir('desc')
+    else setGrSortDir(null)
+  }
+
   // Rows: migrate from legacy comma-separated `times` if present.
   const rows: string[] = s.rows
     ?? (s.times.trim() ? s.times.split(/[\s,\n]+/).filter(Boolean) : ['', '', '', '', ''])
+
+  const grSortedIndices = useMemo(() => {
+    const indices = rows.map((_, i) => i)
+    if (!grSortDir) return indices
+    return indices.sort((a, b) => {
+      const na = parseFloat(rows[a]), nb = parseFloat(rows[b])
+      const cmp = (!isNaN(na) && !isNaN(nb)) ? na - nb : rows[a].localeCompare(rows[b])
+      return grSortDir === 'asc' ? cmp : -cmp
+    })
+  }, [rows, grSortDir])
 
   const setRows = (next: string[]) => patch({ rows: next, result: null })
   const updateRow = (idx: number, val: string) =>
@@ -191,12 +209,15 @@ export default function Growth() {
                     <thead className="bg-gray-50 sticky top-0">
                       <tr>
                         <th className="px-2 py-1 text-left font-medium text-gray-500 w-8">#</th>
-                        <th className="px-2 py-1 text-left font-medium text-gray-500">Time ({units})</th>
+                        <th className="px-2 py-1 text-left font-medium text-gray-500 select-none cursor-pointer hover:text-blue-600"
+                          onClick={toggleGrSort}>Time ({units}) {grSortDir ? <span className="text-[10px]">{grSortDir === 'asc' ? '▲' : '▼'}</span> : ''}</th>
                         <th className="w-7"></th>
                       </tr>
                     </thead>
                     <tbody>
-                      {rows.map((row, i) => (
+                      {grSortedIndices.map(i => {
+                        const row = rows[i]
+                        return (
                         <tr key={i} className="border-t border-gray-100 group">
                           <td className="px-2 py-0.5 text-gray-400 font-mono">{i + 1}</td>
                           <td className="px-1 py-0.5">
@@ -217,7 +238,8 @@ export default function Growth() {
                             </button>
                           </td>
                         </tr>
-                      ))}
+                        )
+                      })}
                     </tbody>
                   </table>
                 </div>

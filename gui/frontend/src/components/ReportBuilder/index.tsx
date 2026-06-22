@@ -4,6 +4,7 @@ import {
   GripVertical, Trash2, ChevronDown, Download, Upload, Save,
   Image as ImageIcon, Table as TableIcon, Plus, Loader,
   RefreshCw, ChevronRight, BarChart3,
+  ArrowUp, ArrowDown, ChevronsUp, ChevronsDown,
 } from 'lucide-react'
 import Plot from '../shared/ExportablePlot'
 // @ts-expect-error -- plotly.js-dist-min ships no TS declarations
@@ -699,34 +700,56 @@ export default function ReportBuilder() {
               </div>
             )}
 
-            {state.blocks.map((block, idx) => (
-              <div
-                key={block.id}
-                draggable
-                onDragStart={() => onDragStart(idx)}
-                onDragOver={e => onDragOver(e, idx)}
-                onDragEnd={onDragEnd}
-                className={`group relative mb-3 rounded-lg transition-all ${
-                  dragIdx === idx
-                    ? 'ring-2 ring-blue-400 bg-blue-50/40'
-                    : 'hover:ring-1 hover:ring-gray-200'
-                }`}
-              >
-                {/* Controls overlay */}
-                <div className="absolute -left-7 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity cursor-grab active:cursor-grabbing">
-                  <GripVertical size={14} className="text-gray-400" />
-                </div>
-                <button
-                  onClick={() => removeBlock(block.id)}
-                  className="absolute -right-2 -top-2 p-1 rounded-full bg-white border border-gray-200 shadow-sm opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-50 hover:border-red-200 hover:text-red-500 z-10"
-                  title="Remove block"
+            {state.blocks.map((block, idx) => {
+              const isFirst = idx === 0
+              const isLast = idx === state.blocks.length - 1
+              return (
+                <div
+                  key={block.id}
+                  draggable
+                  onDragStart={() => onDragStart(idx)}
+                  onDragOver={e => onDragOver(e, idx)}
+                  onDragEnd={onDragEnd}
+                  className={`group relative mb-3 rounded-lg transition-all ${
+                    dragIdx === idx
+                      ? 'ring-2 ring-blue-400 bg-blue-50/40'
+                      : 'hover:ring-1 hover:ring-gray-200'
+                  }`}
                 >
-                  <Trash2 size={11} />
-                </button>
+                  {/* Left controls: drag + move */}
+                  <div className="absolute -left-8 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center gap-0.5 z-10">
+                    <button onClick={() => moveBlock(idx, 0)} disabled={isFirst} title="Move to top"
+                      className="p-0.5 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600 disabled:opacity-20 disabled:cursor-default">
+                      <ChevronsUp size={12} />
+                    </button>
+                    <button onClick={() => moveBlock(idx, idx - 1)} disabled={isFirst} title="Move up"
+                      className="p-0.5 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600 disabled:opacity-20 disabled:cursor-default">
+                      <ArrowUp size={12} />
+                    </button>
+                    <div className="cursor-grab active:cursor-grabbing py-0.5" title="Drag to reorder">
+                      <GripVertical size={14} className="text-gray-400" />
+                    </div>
+                    <button onClick={() => moveBlock(idx, idx + 1)} disabled={isLast} title="Move down"
+                      className="p-0.5 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600 disabled:opacity-20 disabled:cursor-default">
+                      <ArrowDown size={12} />
+                    </button>
+                    <button onClick={() => moveBlock(idx, state.blocks.length - 1)} disabled={isLast} title="Move to bottom"
+                      className="p-0.5 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600 disabled:opacity-20 disabled:cursor-default">
+                      <ChevronsDown size={12} />
+                    </button>
+                  </div>
+                  <button
+                    onClick={() => removeBlock(block.id)}
+                    className="absolute -right-2 -top-2 p-1 rounded-full bg-white border border-gray-200 shadow-sm opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-50 hover:border-red-200 hover:text-red-500 z-10"
+                    title="Remove block"
+                  >
+                    <Trash2 size={11} />
+                  </button>
 
-                <BlockRenderer block={block} onChange={p => updateBlock(block.id, p)} />
-              </div>
-            ))}
+                  <BlockRenderer block={block} onChange={p => updateBlock(block.id, p)} />
+                </div>
+              )
+            })}
 
             {state.blocks.length > 0 && (
               <div className="flex justify-center pt-4">

@@ -11,8 +11,14 @@ import {
 } from '../../api/client'
 import { useFolioState, useUnits } from '../../store/project'
 import FolioBar from '../shared/FolioBar'
-import ReliabilityTestingTools from './ReliabilityTestingTools'
-import ALTTestTypes from './ALTTestTypes'
+import { ToolTabs } from './toolkit'
+import RDTTools from './RDTTools'
+import { StepStress, MultiStress, HALT, MarginTest } from './ALTTestTypes'
+import { ExpectedFailureTimes, DifferenceDetection, Simulation } from './TestDesignTools'
+import {
+  Planner, Duration, NoFailures, OneProportion, TwoProportion,
+  Sequential, GoF, Degradation, ESS, HASS, BurnIn,
+} from './ReliabilityTestingTools'
 
 const ALL_MODELS = [
   'Weibull_Exponential','Weibull_Eyring','Weibull_Power',
@@ -247,7 +253,8 @@ export default function ALT() {
   const [error, setError] = useState<string | null>(null)
   // Top-level view: Accelerated Life Testing (life-stress fitting/planning) vs
   // the Reliability Testing tool suite.
-  const [topView, setTopView] = useState<'alt' | 'tests' | 'testing'>('alt')
+  const [topView, setTopView] = useState<'alt' | 'rdt' | 'design' | 'degradation'>('alt')
+  const [altTab, setAltTab] = useState<'model' | 'accel' | 'step' | 'multi' | 'halt' | 'margin'>('model')
   const tableRef = useRef<HTMLDivElement>(null)
 
   // Sort state for the data table (display-only)
@@ -475,7 +482,7 @@ export default function ALT() {
       <FolioBar api={folios} />
       {/* Top-level view switcher */}
       <div className="flex items-stretch gap-1 bg-white border-b border-gray-200 px-3">
-        {([['alt', 'Accelerated Life Testing'], ['tests', 'ALT Test Types'], ['testing', 'Reliability Testing']] as const).map(([v, lbl]) => (
+        {([['alt', 'Accelerated Life Testing'], ['rdt', 'Reliability Demonstration (RDT)'], ['design', 'Test Design & Planning'], ['degradation', 'Degradation & Screening']] as const).map(([v, lbl]) => (
           <button
             key={v}
             onClick={() => setTopView(v)}
@@ -486,36 +493,48 @@ export default function ALT() {
         ))}
       </div>
 
-      {topView === 'testing' ? (
-        <ReliabilityTestingTools />
-      ) : topView === 'tests' ? (
-        <ALTTestTypes />
+      {topView === 'rdt' ? (
+        <RDTTools />
+      ) : topView === 'design' ? (
+        <ToolTabs tools={[
+          { id: 'expected', label: 'Expected Failure Times', render: () => <ExpectedFailureTimes /> },
+          { id: 'difference', label: 'Difference Detection Matrix', render: () => <DifferenceDetection /> },
+          { id: 'simulation', label: 'Simulation', render: () => <Simulation /> },
+          { id: 'exp-planner', label: 'Exponential Test Planner', render: () => <Planner /> },
+          { id: 'duration', label: 'Test Duration', render: () => <Duration /> },
+          { id: 'no-failures', label: 'Zero-Failure Sample Size', render: () => <NoFailures /> },
+          { id: 'sequential', label: 'Sequential Sampling', render: () => <Sequential /> },
+          { id: 'one-proportion', label: 'One-Sample Proportion', render: () => <OneProportion /> },
+          { id: 'two-proportion', label: 'Two-Proportion Test', render: () => <TwoProportion /> },
+          { id: 'gof', label: 'Goodness of Fit', render: () => <GoF /> },
+        ]} />
+      ) : topView === 'degradation' ? (
+        <ToolTabs tools={[
+          { id: 'degradation', label: 'Degradation Testing', render: () => <Degradation /> },
+          { id: 'ess', label: 'ESS Screening', render: () => <ESS /> },
+          { id: 'hass', label: 'HASS Screening', render: () => <HASS /> },
+          { id: 'burn-in', label: 'Burn-In Design', render: () => <BurnIn /> },
+        ]} />
       ) : (
+      <div className="flex flex-col flex-1 min-h-0">
+      {/* ALT sub-navigation */}
+      <div className="flex items-stretch gap-1 bg-gray-50 border-b border-gray-200 px-3 overflow-x-auto">
+        {([['model', 'Life-Stress Model'], ['accel', 'Acceleration Factor'], ['step', 'Step / Sequential Stress'], ['multi', 'Multi-Stress'], ['halt', 'HALT'], ['margin', 'Margin Test']] as const).map(([v, lbl]) => (
+          <button key={v}
+            onClick={() => { setAltTab(v); if (v === 'model') setMode('fitting'); if (v === 'accel') setMode('accel') }}
+            className={`px-3 py-1.5 text-xs font-medium whitespace-nowrap border-b-2 transition-colors ${
+              altTab === v ? 'border-blue-600 text-blue-700' : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}>{lbl}</button>
+        ))}
+      </div>
+      {altTab === 'step' ? <StepStress /> :
+       altTab === 'multi' ? <MultiStress /> :
+       altTab === 'halt' ? <HALT /> :
+       altTab === 'margin' ? <MarginTest /> : (
       <div className="flex flex-1 min-h-0">
       {/* Left panel */}
       <div className="w-72 flex-shrink-0 bg-white border-r border-gray-200 overflow-y-auto p-4 flex flex-col gap-4">
-        <div className="flex gap-2">
-          <button
-            onClick={() => setMode('fitting')}
-            className={`flex-1 py-1.5 text-xs rounded font-medium border transition-colors ${
-              mode === 'fitting' ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-300 text-gray-600'
-            }`}
-          >Model Fitting</button>
-          <button
-            onClick={() => setMode('planner')}
-            className={`flex-1 py-1.5 text-xs rounded font-medium border transition-colors ${
-              mode === 'planner' ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-300 text-gray-600'
-            }`}
-          >Test Planner</button>
-          <button
-            onClick={() => setMode('accel')}
-            className={`flex-1 py-1.5 text-xs rounded font-medium border transition-colors ${
-              mode === 'accel' ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-300 text-gray-600'
-            }`}
-          >Accel. Factor</button>
-        </div>
-
-        {mode === 'accel' ? (<AccelFactorCalc />) : mode === 'fitting' ? (<>
+        {altTab === 'accel' ? (<AccelFactorCalc />) : (<>
         <FileUpload onData={handleCSV} label="Upload CSV (columns: value, type[F/S])" />
 
         <div>
@@ -640,119 +659,6 @@ export default function ALT() {
           <Play size={14} />
           {loading ? 'Running...' : 'Run ALT Analysis'}
         </button>
-        </>) : (<>
-        {/* Planner sidebar — single consolidated screen */}
-        <label className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer border border-gray-200 rounded px-3 py-2 bg-gray-50">
-          <input type="checkbox" checked={psNonParam}
-            onChange={e => setPsNonParam(e.target.checked)}
-            className="rounded text-blue-600" />
-          <span>
-            <span className="font-medium block">Non-parametric (Method 1)</span>
-            <span className="text-[10px] text-gray-500">Solve sample size from the binomial equation only</span>
-          </span>
-        </label>
-
-        <div className="grid grid-cols-2 gap-2">
-          <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">Allowable failures (f)</label>
-            <select value={psFailures} onChange={e => setPsFailures(Number(e.target.value))}
-              className="w-full text-xs border border-gray-300 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-400">
-              {Array.from({ length: 16 }, (_, i) => <option key={i} value={i}>{i}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">Confidence level</label>
-            <select value={psCI} onChange={e => setPsCI(Number(e.target.value))}
-              className="w-full text-xs border border-gray-300 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-400">
-              {CI_LEVELS.map(c => <option key={c} value={c}>{Math.round(c * 100)}%</option>)}
-            </select>
-          </div>
-        </div>
-
-        <div>
-          <label className="block text-xs font-medium text-gray-700 mb-1"
-            title="The reliability you must demonstrate at the stated confidence level (e.g. R = 0.90 means 90% of units survive the mission). Drives the required sample size or test time.">
-            Reliability requirement (R)
-          </label>
-          <input type="text" value={psR} onChange={e => setPsR(e.target.value)}
-            className="w-full text-sm border border-gray-300 rounded px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-400"
-            placeholder="0.80" />
-        </div>
-
-        {!psNonParam && (<>
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1">Mission time</label>
-              <input type="text" value={psMission} onChange={e => setPsMission(e.target.value)}
-                className="w-full text-sm border border-gray-300 rounded px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-400"
-                placeholder="2000" />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1">Weibull β</label>
-              <input type="text" value={psBeta} onChange={e => setPsBeta(e.target.value)}
-                className="w-full text-sm border border-gray-300 rounded px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-400"
-                placeholder="2.0" />
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1"
-              title="Ratio of life at use conditions to life at test conditions. The required test time per unit is divided by AF, so a higher AF means a shorter accelerated test demonstrates the same reliability.">
-              Acceleration factor (AF)
-            </label>
-            <input type="text" value={psAF} onChange={e => setPsAF(e.target.value)}
-              className="w-full text-sm border border-gray-300 rounded px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-400"
-              placeholder="1.0" />
-            <p className="text-[10px] text-gray-400 mt-0.5">
-              Effective test time = AF × actual test time
-            </p>
-          </div>
-
-          <div className="border border-gray-200 rounded p-2 flex flex-col gap-2">
-            <p className="text-[10px] text-gray-500">
-              Fill <span className="font-medium">one</span> of the following —
-              the other is solved for:
-            </p>
-            <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1">
-                Available test time <span className="text-gray-400">(solves samples — 2A)</span>
-              </label>
-              <input type="text" value={psTestTime} onChange={e => setPsTestTime(e.target.value)}
-                className="w-full text-sm border border-gray-300 rounded px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-400"
-                placeholder="e.g. 1500" />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1">
-                Sample size (n) <span className="text-gray-400">(solves test time — 2B)</span>
-              </label>
-              <input type="text" value={psN} onChange={e => setPsN(e.target.value)}
-                className="w-full text-sm border border-gray-300 rounded px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-400"
-                placeholder="e.g. 19" />
-            </div>
-          </div>
-        </>)}
-
-        <div className="flex flex-col gap-1">
-          <label className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
-            <input type="checkbox" checked={psTable} onChange={e => setPsTable(e.target.checked)} className="rounded text-blue-600" />
-            Show options table (f = 0…15)
-          </label>
-          <label className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
-            <input type="checkbox" checked={psOC} onChange={e => setPsOC(e.target.checked)} className="rounded text-blue-600" />
-            Show OC curve
-          </label>
-        </div>
-
-        {error && <p className="text-xs text-red-600 bg-red-50 p-2 rounded">{error}</p>}
-
-        <button
-          onClick={runPlanner}
-          disabled={loading}
-          className="flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium py-2 rounded transition-colors"
-        >
-          <Play size={14} />
-          {loading ? 'Computing...' : 'Calculate'}
-        </button>
         </>)}
       </div>
 
@@ -813,83 +719,18 @@ export default function ALT() {
             </div>
           )
         ) : (
-          /* Planner results area */
-          psResult ? (
-            <div className="flex-1 overflow-y-auto p-6">
-              {/* Summary cards */}
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-6">
-                {psSummaryCards.map(c => (
-                  <div key={c.label} className={`rounded-lg border p-3 ${c.accent ? 'bg-blue-50 border-blue-200' : 'bg-white border-gray-200'}`}>
-                    <p className="text-xs text-gray-500">{c.label}</p>
-                    <p className={`text-lg font-semibold ${c.accent ? 'text-blue-700' : 'text-gray-900'}`}>{c.value}</p>
-                  </div>
-                ))}
-              </div>
-
-              {/* Options table */}
-              {psResult.options_table && (
-                <div className="mb-6">
-                  <h3 className="text-sm font-semibold text-gray-700 mb-2">Options Table (f = 0…15)</h3>
-                  <div className="overflow-x-auto border border-gray-200 rounded-lg">
-                    <table className="w-full text-xs">
-                      <thead className="bg-gray-50">
-                        <tr>
-                          <th className="px-3 py-2 text-left font-medium text-gray-600">Failures (f)</th>
-                          <th className="px-3 py-2 text-left font-medium text-gray-600">
-                            {psResult.method === 'parametric_time' ? 'Test Time' : 'Sample Size (n)'}
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {psResult.options_table.map((row, i) => (
-                          <tr key={i} className={`border-t border-gray-100 ${row.f === psResult.failures ? 'bg-blue-50 font-semibold' : ''}`}>
-                            <td className="px-3 py-1.5">{row.f}</td>
-                            <td className="px-3 py-1.5">
-                              {psResult.method === 'parametric_time'
-                                ? (row.test_time != null ? row.test_time.toLocaleString() : '—')
-                                : (row.n != null ? row.n : '—')}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-
-              {/* OC Curve */}
-              {psResult.oc_curve && ocPlotData.length > 0 && (
-                <div>
-                  <h3 className="text-sm font-semibold text-gray-700 mb-2">Operating Characteristic Curve</h3>
-                  <div className="bg-white border border-gray-200 rounded-lg" style={{ height: 350 }}>
-                    <Plot
-                      data={ocPlotData as Plotly.Data[]}
-                      layout={{
-                        xaxis: { title: { text: 'True Reliability' }, range: [0.5, 1], gridcolor: '#e5e7eb' },
-                        yaxis: { title: { text: 'P(pass test)' }, range: [0, 1.05], gridcolor: '#e5e7eb' },
-                        margin: { t: 20, r: 20, b: 50, l: 60 },
-                        paper_bgcolor: 'white', plot_bgcolor: 'white',
-                        legend: { x: 0.02, y: 0.98, font: { size: 10 } },
-                        showlegend: true,
-                      } as any}
-                      config={{ responsive: true }}
-                      style={{ width: '100%', height: '100%' }}
-                      useResizeHandler
-                    />
-                  </div>
-                </div>
-              )}
+          /* Acceleration Factor renders its own inputs + result in the left panel */
+          <div className="flex-1 flex items-center justify-center text-gray-400">
+            <div className="text-center">
+              <p className="text-lg font-medium">Acceleration Factor Calculator</p>
+              <p className="text-sm mt-1">Enter the model parameters on the left and click Calculate</p>
             </div>
-          ) : (
-            <div className="flex-1 flex items-center justify-center text-gray-400">
-              <div className="text-center">
-                <p className="text-lg font-medium">Reliability Demonstration Test Planner</p>
-                <p className="text-sm mt-1">Configure parameters and click Calculate</p>
-              </div>
-            </div>
-          )
-        )}
+          </div>
+        )
+        }
       </div>
+      </div>
+      )}
       </div>
       )}
     </div>

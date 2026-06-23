@@ -12,53 +12,9 @@ import {
   burnInAnalysis, BurnInResponse,
 } from '../../api/client'
 import InfoLabel from '../shared/InfoLabel'
-
-const inputCls = 'w-full text-xs border border-gray-300 rounded px-2 py-1.5 font-mono focus:outline-none focus:ring-1 focus:ring-blue-400'
-const labelCls = 'block text-xs font-medium text-gray-700 mb-1'
-const btnCls = 'flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-medium py-2 rounded transition-colors'
-
-function detail(e: unknown, fb: string): string {
-  return (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || fb
-}
-function Card({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
-  return (
-    <div className={`rounded-lg border p-3 ${accent ? 'bg-blue-50 border-blue-200' : 'bg-white border-gray-200'}`}>
-      <p className="text-xs text-gray-500">{label}</p>
-      <p className={`text-lg font-semibold ${accent ? 'text-blue-700' : 'text-gray-900'}`}>{value}</p>
-    </div>
-  )
-}
-function Field({ label, tip, value, onChange, type = 'number' }: {
-  label: string; tip?: string; value: string; onChange: (v: string) => void; type?: string
-}) {
-  return (
-    <div>
-      {tip ? <InfoLabel tip={tip}>{label}</InfoLabel> : <label className={labelCls}>{label}</label>}
-      <input type={type} step="any" value={value} onChange={e => onChange(e.target.value)} className={inputCls} />
-    </div>
-  )
-}
-
-const RT_TOOLS = [
-  { id: 'planner', label: 'Test Planner' },
-  { id: 'duration', label: 'Test Duration' },
-  { id: 'no-failures', label: 'Zero-Failure Sample Size' },
-  { id: 'one-proportion', label: 'One-Sample Proportion' },
-  { id: 'two-proportion', label: 'Two-Proportion Test' },
-  { id: 'sequential', label: 'Sequential Sampling' },
-  { id: 'gof', label: 'Goodness of Fit' },
-  { id: 'degradation', label: 'Degradation Testing' },
-  { id: 'ess', label: 'ESS Screening' },
-  { id: 'hass', label: 'HASS Screening' },
-  { id: 'burn-in', label: 'Burn-In Design' },
-] as const
-type RTTool = typeof RT_TOOLS[number]['id']
-
-const PLOT_CFG = { responsive: true, displayModeBar: true } as const
-const plotBase = {
-  margin: { t: 30, r: 20, b: 45, l: 55 },
-  paper_bgcolor: 'white', plot_bgcolor: 'white',
-}
+import {
+  inputCls, labelCls, detail, Card, Field, fmtNum, ToolLayout, PLOT_CFG, plotBase,
+} from './toolkit'
 
 // ─── Exponential test planner ────────────────────────────────────────────────
 
@@ -1075,60 +1031,9 @@ function BurnIn() {
   return <ToolLayout intro="Design a burn-in test to remove infant-mortality failures (Weibull β < 1). Shows expected fallout, survival probability, and the reduced hazard rate of the surviving population." controls={controls} err={err} loading={loading} onRun={run} runLabel="Compute" results={results} />
 }
 
-// ─── Shared layout ───────────────────────────────────────────────────────────
-
-function fmtNum(v: number | null | undefined): string {
-  if (v == null || !isFinite(v)) return '—'
-  if (Math.abs(v) >= 1000 || (Math.abs(v) < 0.01 && v !== 0)) return v.toExponential(2)
-  return v.toFixed(2)
-}
-
-function ToolLayout({ intro, controls, err, loading, onRun, runLabel, results }: {
-  intro: string; controls: React.ReactNode; err: string | null; loading: boolean
-  onRun: () => void; runLabel: string; results: React.ReactNode
-}) {
-  return (
-    <div className="flex flex-1 overflow-hidden">
-      <div className="w-80 flex-shrink-0 bg-white border-r border-gray-200 overflow-y-auto p-4 flex flex-col gap-3">
-        <p className="text-xs text-gray-500 leading-snug">{intro}</p>
-        {controls}
-        {err && <p className="text-xs text-red-600 bg-red-50 p-2 rounded">{err}</p>}
-        <button onClick={onRun} disabled={loading} className={btnCls}><Play size={12} /> {loading ? 'Working...' : runLabel}</button>
-      </div>
-      <div className="flex-1 overflow-y-auto p-6">
-        {results ?? (
-          <div className="h-full flex items-center justify-center text-gray-400 text-sm">
-            Enter inputs and click {runLabel}.
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
-export default function ReliabilityTestingTools() {
-  const [tool, setTool] = useState<RTTool>('planner')
-  return (
-    <div className="flex flex-col flex-1 overflow-hidden">
-      <div className="flex items-stretch gap-1 bg-gray-50 border-b border-gray-200 px-3 overflow-x-auto">
-        {RT_TOOLS.map(t => (
-          <button key={t.id} onClick={() => setTool(t.id)}
-            className={`px-3 py-1.5 text-xs font-medium whitespace-nowrap border-b-2 transition-colors ${
-              tool === t.id ? 'border-blue-600 text-blue-700' : 'border-transparent text-gray-500 hover:text-gray-700'
-            }`}>{t.label}</button>
-        ))}
-      </div>
-      {tool === 'planner' && <Planner />}
-      {tool === 'duration' && <Duration />}
-      {tool === 'no-failures' && <NoFailures />}
-      {tool === 'one-proportion' && <OneProportion />}
-      {tool === 'two-proportion' && <TwoProportion />}
-      {tool === 'sequential' && <Sequential />}
-      {tool === 'gof' && <GoF />}
-      {tool === 'degradation' && <Degradation />}
-      {tool === 'ess' && <ESS />}
-      {tool === 'hass' && <HASS />}
-      {tool === 'burn-in' && <BurnIn />}
-    </div>
-  )
+// Tool components are exported individually and composed into the module's
+// top-level tabs by ALT/index.tsx.
+export {
+  Planner, Duration, NoFailures, OneProportion, TwoProportion,
+  Sequential, GoF, Degradation, ESS, HASS, BurnIn,
 }

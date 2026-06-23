@@ -58,14 +58,37 @@ export const HELP_CONTENT: Record<string, ModuleHelp> = {
   alt: {
     title: 'Reliability Testing',
     overview:
-      'Plan and analyze reliability demonstration tests and accelerated life tests (ALT): sample sizes, test duration, success/failure demonstration, and life-stress models.',
+      'A suite for planning and analyzing reliability tests, organized into four areas: Accelerated Life Testing, Reliability Demonstration (RDT), Test Design & Planning, and Degradation & Screening.',
     sections: [
       {
-        heading: 'What you can do',
+        heading: 'Accelerated Life Testing',
         items: [
-          'Demonstration test design (zero/limited-failure plans) for a reliability/confidence target.',
-          'Accelerated life test fitting (Arrhenius, Eyring, inverse power law, etc.) to extrapolate from elevated stress to use conditions.',
-          'Operating characteristic (OC) curves and pass-probability analysis.',
+          'Life-stress model fitting (Arrhenius, Eyring, inverse power law, etc.) to extrapolate from elevated stress to use conditions.',
+          'Acceleration factor calculator, plus step/sequential-stress, multi-stress, HALT, and margin tests.',
+        ],
+      },
+      {
+        heading: 'Reliability Demonstration (RDT)',
+        items: [
+          'Parametric Binomial — demonstrate reliability at a time, assuming a distribution and shape; solve for sample size or test time.',
+          'Non-Parametric Binomial — distribution-free / one-shot demonstration; solve sample size, reliability, or confidence.',
+          'Exponential Chi-Squared — accumulated test time for a constant-failure-rate demonstration.',
+          'Non-Parametric Bayesian — fold in a prior from expert opinion or subsystem tests (beta prior).',
+        ],
+      },
+      {
+        heading: 'Test Design & Planning',
+        items: [
+          'Expected Failure Times plot — when each ordered failure is expected for a planned sample size.',
+          'Difference Detection Matrix — the test duration needed to distinguish two designs’ B10/mean life.',
+          'Monte-Carlo Simulation of a test design, plus exponential planners, sequential sampling, and proportion / goodness-of-fit tools.',
+        ],
+      },
+      {
+        heading: 'Degradation & Screening',
+        items: [
+          'Degradation (wear-to-failure) testing — non-destructive and destructive.',
+          'ESS, HASS, and burn-in screen design.',
         ],
       },
       {

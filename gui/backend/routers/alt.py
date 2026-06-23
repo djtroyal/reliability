@@ -29,6 +29,8 @@ from schemas import (
     StepStressRequest, HALTRequest, MarginTestRequest, MultiStressRequest,
     DegradationRequest, DestructiveDegradationRequest,
     ESSRequest, HASSRequest, BurnInRequest,
+    ExpChiSquaredRDTRequest, BayesianRDTRequest, ExpectedFailureTimesRequest,
+    DifferenceDetectionRequest, TestSimulationRequest,
 )
 
 router = APIRouter()
@@ -1368,4 +1370,367 @@ def burn_in(req: BurnInRequest):
             "before": h_before.tolist(),
             "after": h_after.tolist(),
         },
+    }
+
+
+# ===========================================================================
+# Reliability Demonstration Testing (RDT) — Reliability Test Design reference
+# ===========================================================================
+
+def _weibull_eta_from_metric(metric_value, beta, metric):
+    """Solve Weibull eta from a B10 life or mean life."""
+    from scipy.special import gamma as _gamma
+    if metric == "mean":
+        return metric_value / _gamma(1.0 + 1.0 / beta)
+    # B10: t = eta * (-ln(0.9))**(1/beta)
+    return metric_value / ((-math.log(0.9)) ** (1.0 / beta))
+
+
+def _quantile_from_rank(rank, distribution, beta, eta):
+    """Inverse CDF (time) at the given cumulative probability `rank`."""
+    from scipy.stats import norm, lognorm
+    rank = min(max(rank, 1e-9), 1 - 1e-9)
+    if distribution == "Normal":
+        return float(norm.ppf(rank, loc=eta, scale=beta))
+    if distribution == "Lognormal":
+        return float(lognorm.ppf(rank, s=beta, scale=math.exp(eta)))
+    if distribution == "Exponential":
+        return float(-eta * math.log(1.0 - rank))   # eta = MTTF
+    # Weibull
+    return float(eta * (-math.log(1.0 - rank)) ** (1.0 / beta))
+
+
+@router.post("/rdt/exponential-chi-squared")
+def rdt_exponential_chi_squared(req: ExpChiSquaredRDTRequest):
+    """Exponential (constant failure rate) chi-squared demonstration test.
+
+    Ta = (t_demo / -ln(R)) * chi2(1-CL; 2f+2) / 2  (reliability metric)
+    Ta = MTTF * chi2(1-CL; 2f+2) / 2               (MTTF metric)
+    """
+    from scipy.stats import chi2
+
+    if not (0.0 < req.confidence < 1.0):
+        raise HTTPException(status_code=400, detail="confidence must be in (0, 1).")
+    f = max(0, int(req.failures))
+    chi2_val = float(chi2.ppf(req.confidence, 2 * f + 2))
+
+    if req.metric == "mttf":
+        if req.mttf <= 0:
+            raise HTTPException(status_code=400, detail="mttf must be > 0.")
+        Ta = req.mttf * chi2_val / 2.0
+        mttf_demo = req.mttf
+    else:
+        if not (0.0 < req.reliability < 1.0) or req.demo_time <= 0:
+            raise HTTPException(status_code=400,
+                                detail="reliability must be in (0,1) and demo_time > 0.")
+        mttf_demo = req.demo_time / (-math.log(req.reliability))
+        Ta = mttf_demo * chi2_val / 2.0
+
+    out = {
+        "metric": req.metric, "confidence": req.confidence, "failures": f,
+        "chi_squared": round(chi2_val, 6),
+        "accumulated_test_time": round(Ta, 4),
+        "implied_mttf": round(mttf_demo, 4),
+    }
+    if req.solve_for == "sample_size":
+        if not req.test_time or req.test_time <= 0:
+            raise HTTPException(status_code=400, detail="test_time required to solve sample_size.")
+        out["test_time"] = req.test_time
+        out["sample_size"] = int(math.ceil(Ta / req.test_time))
+    else:  # test_time per unit
+        n = req.n if req.n and req.n > 0 else 1
+        out["sample_size"] = n
+        out["test_time"] = round(Ta / n, 4)
+    return out
+
+
+def _bayes_prior_params(req: BayesianRDTRequest):
+    """Compute (alpha0, beta0, E_R0, Var_R0) from the chosen prior source."""
+    if req.prior_source == "subsystem":
+        subs = req.subsystems or []
+        if not subs:
+            raise HTTPException(status_code=400, detail="subsystems required for subsystem prior.")
+        E_list, V_list = [], []
+        for s in subs:
+            n_i = float(s["n"]); r_i = float(s["r"])
+            E_i = (n_i - r_i) / (n_i + 1.0)
+            V_i = ((n_i - r_i) * (r_i + 1.0)) / ((n_i + 1.0) ** 2 * (n_i + 2.0))
+            E_list.append(E_i); V_list.append(V_i)
+        E_R0 = 1.0
+        for e in E_list:
+            E_R0 *= e
+        prod_e2v = 1.0
+        prod_e2 = 1.0
+        for e, v in zip(E_list, V_list):
+            prod_e2v *= (e * e + v)
+            prod_e2 *= (e * e)
+        Var_R0 = prod_e2v - prod_e2
+    else:  # expert
+        if req.worst is None or req.likely is None or req.best is None:
+            raise HTTPException(status_code=400,
+                                detail="worst/likely/best reliabilities required for expert prior.")
+        a, b, c = req.worst, req.likely, req.best
+        E_R0 = (a + 4.0 * b + c) / 6.0
+        Var_R0 = ((c - a) / 6.0) ** 2
+
+    if Var_R0 <= 0:
+        raise HTTPException(status_code=400, detail="Prior variance must be positive.")
+    factor = (E_R0 - E_R0 ** 2) / Var_R0 - 1.0
+    alpha0 = E_R0 * factor
+    beta0 = (1.0 - E_R0) * factor
+    return alpha0, beta0, E_R0, Var_R0
+
+
+@router.post("/rdt/bayesian")
+def rdt_bayesian(req: BayesianRDTRequest):
+    """Non-parametric Bayesian reliability demonstration test (beta prior)."""
+    from scipy.stats import beta as _beta
+
+    alpha0, beta0, E_R0, Var_R0 = _bayes_prior_params(req)
+    r = max(0, int(req.failures))
+    out = {
+        "prior_source": req.prior_source,
+        "E_R0": round(E_R0, 6), "Var_R0": round(Var_R0, 8),
+        "alpha0": round(alpha0, 6), "beta0": round(beta0, 6),
+        "solve_for": req.solve_for, "failures": r,
+    }
+
+    def demonstrated_R(n):
+        s = n - r
+        a = alpha0 + s
+        b = beta0 + r
+        return float(_beta.ppf(1.0 - req.confidence, a, b)), a, b
+
+    if req.solve_for == "reliability":
+        if not req.n or req.n <= r:
+            raise HTTPException(status_code=400, detail="n must be > failures.")
+        R, a, b = demonstrated_R(req.n)
+        out.update(n=req.n, confidence=req.confidence,
+                   reliability=round(R, 6), posterior_alpha=round(a, 6),
+                   posterior_beta=round(b, 6))
+    elif req.solve_for == "confidence":
+        if not req.n or req.n <= r:
+            raise HTTPException(status_code=400, detail="n must be > failures.")
+        s = req.n - r
+        a = alpha0 + s
+        b = beta0 + r
+        # 1 - CL = I_R(alpha, beta)  ->  CL = 1 - betacdf(R; alpha, beta)
+        CL = 1.0 - float(_beta.cdf(req.reliability, a, b))
+        out.update(n=req.n, reliability=req.reliability,
+                   confidence=round(CL, 6), posterior_alpha=round(a, 6),
+                   posterior_beta=round(b, 6))
+    else:  # sample_size
+        target_R = req.reliability
+        n = r + 1
+        found = None
+        while n <= r + 100000:
+            R, _, _ = demonstrated_R(n)
+            if R >= target_R:
+                found = n
+                break
+            n += 1
+        if found is None:
+            raise HTTPException(status_code=400, detail="Could not find a sample size; check inputs.")
+        out.update(reliability=target_R, confidence=req.confidence, sample_size=found)
+    return out
+
+
+@router.post("/rdt/expected-failure-times")
+def rdt_expected_failure_times(req: ExpectedFailureTimesRequest):
+    """Expected ordered failure times with confidence bounds (median ranks)."""
+    from scipy.stats import beta as _beta
+
+    n = int(req.n)
+    if n < 1 or n > 1000:
+        raise HTTPException(status_code=400, detail="n must be between 1 and 1000.")
+    if not (0.0 < req.confidence < 1.0):
+        raise HTTPException(status_code=400, detail="confidence must be in (0, 1).")
+    lo_p = (1.0 - req.confidence) / 2.0
+    hi_p = 1.0 - lo_p
+
+    rows = []
+    for i in range(1, n + 1):
+        mr = float(_beta.ppf(0.5, i, n - i + 1))
+        lr = float(_beta.ppf(lo_p, i, n - i + 1))
+        ur = float(_beta.ppf(hi_p, i, n - i + 1))
+        rows.append({
+            "order": i,
+            "low": round(_quantile_from_rank(lr, req.distribution, req.beta, req.eta), 4),
+            "median": round(_quantile_from_rank(mr, req.distribution, req.beta, req.eta), 4),
+            "high": round(_quantile_from_rank(ur, req.distribution, req.beta, req.eta), 4),
+        })
+    return {
+        "n": n, "distribution": req.distribution, "beta": req.beta, "eta": req.eta,
+        "confidence": req.confidence, "rows": rows,
+    }
+
+
+def _weibull_blife_ci(failures, rc, p, CI):
+    """Fit Weibull_2P and return (B-life, lower, upper) for unreliability p."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        fit = Fit_Weibull_2P(failures=np.asarray(failures, dtype=float),
+                             right_censored=(np.asarray(rc, dtype=float) if rc else None),
+                             show_probability_plot=False, CI=CI)
+    eta, beta = float(fit.eta), float(fit.beta)
+    k = -math.log(1.0 - p)
+    t_p = eta * k ** (1.0 / beta)
+    cov = getattr(fit, "covariance_matrix", None)  # order: [eta, beta]
+    if cov is None or not np.all(np.isfinite(cov)):
+        return t_p, None, None
+    # ln(t_p) = ln(eta) + (1/beta) ln(k)
+    d_eta = 1.0 / eta
+    d_beta = -(1.0 / beta ** 2) * math.log(k)
+    J = np.array([d_eta, d_beta])
+    var_ln = float(J @ cov @ J)
+    if not np.isfinite(var_ln) or var_ln < 0:
+        return t_p, None, None
+    from scipy.stats import norm
+    z = float(norm.ppf(1.0 - (1.0 - CI) / 2.0))
+    se = math.sqrt(var_ln)
+    return t_p, t_p * math.exp(-z * se), t_p * math.exp(z * se)
+
+
+@router.post("/rdt/difference-detection-matrix")
+def rdt_difference_detection(req: DifferenceDetectionRequest):
+    """Difference detection matrix: can a B10/mean difference be detected?"""
+    from scipy.stats import beta as _beta
+
+    test_times = sorted([t for t in req.test_times if t > 0])
+    if not test_times:
+        raise HTTPException(status_code=400, detail="At least one test time is required.")
+
+    # Build the metric axis.
+    vals = []
+    v = req.metric_min
+    while v <= req.metric_max + 1e-9:
+        vals.append(round(v, 6))
+        v += req.metric_increment
+    if len(vals) < 1:
+        raise HTTPException(status_code=400, detail="Invalid metric range.")
+
+    p = 0.10  # B10
+
+    def median_failure_times(metric_value, beta, n):
+        eta = _weibull_eta_from_metric(metric_value, beta, req.metric if req.metric == "mean" else "B10")
+        times = []
+        for i in range(1, n + 1):
+            mr = float(_beta.ppf(0.5, i, n - i + 1))
+            times.append(eta * (-math.log(1.0 - mr)) ** (1.0 / beta))
+        return times
+
+    def metric_ci(metric_value, beta, n, T):
+        """Censor median failure times at T, fit Weibull, return (val, lo, hi)."""
+        times = median_failure_times(metric_value, beta, n)
+        fails = [t for t in times if t <= T]
+        susp = [T for t in times if t > T]
+        if len(fails) < 2:
+            return None
+        if req.metric == "mean":
+            # Mean-life bounds via B-life proxy is non-trivial; use B10 spacing
+            # scaled — but for the matrix we compare overlap, so use B10 bounds.
+            return _weibull_blife_ci(fails, susp, p, req.confidence)
+        return _weibull_blife_ci(fails, susp, p, req.confidence)
+
+    # Each cell holds the SHORTEST test duration (hours) at which the two
+    # designs' metric confidence intervals stop overlapping (0 = the difference
+    # cannot be detected with any of the supplied test durations).
+    matrix = []
+    detail_cells = {}
+    for m2 in vals:               # rows = design 2
+        row = []
+        for m1 in vals:           # cols = design 1
+            cell = 0
+            for T in test_times:  # ascending -> first hit is the shortest
+                c1 = metric_ci(m1, req.design1_beta, req.design1_n, T)
+                c2 = metric_ci(m2, req.design2_beta, req.design2_n, T)
+                if not c1 or not c2 or c1[1] is None or c2[1] is None:
+                    continue
+                # non-overlapping CIs -> detectable
+                if c1[2] < c2[1] or c2[2] < c1[1]:
+                    cell = T
+                    detail_cells[f"{m1}|{m2}"] = {
+                        "test_time": T,
+                        "design1": {"value": round(c1[0], 3), "lower": round(c1[1], 3), "upper": round(c1[2], 3)},
+                        "design2": {"value": round(c2[0], 3), "lower": round(c2[1], 3), "upper": round(c2[2], 3)},
+                    }
+                    break
+            row.append(cell)
+        matrix.append(row)
+
+    return {
+        "metric": req.metric, "confidence": req.confidence,
+        "design1_beta": req.design1_beta, "design2_beta": req.design2_beta,
+        "values": vals, "test_times": test_times,
+        "matrix": matrix, "details": detail_cells,
+    }
+
+
+@router.post("/test-simulation")
+def test_simulation(req: TestSimulationRequest):
+    """Monte-Carlo simulation of a reliability test design."""
+    rng = np.random.default_rng(req.seed)
+    n = int(req.n)
+    if n < 2 or req.num_simulations < 10:
+        raise HTTPException(status_code=400, detail="Need n>=2 and num_simulations>=10.")
+
+    def sample(size):
+        if req.distribution == "Normal":
+            return rng.normal(req.eta, req.beta, size)
+        if req.distribution == "Lognormal":
+            return rng.lognormal(req.eta, req.beta, size)
+        if req.distribution == "Exponential":
+            return rng.exponential(req.eta, size)
+        return req.eta * rng.weibull(req.beta, size)   # Weibull
+
+    estimates = []
+    n_sims = int(min(req.num_simulations, 5000))
+    for _ in range(n_sims):
+        data = np.abs(sample(n))
+        rc = None
+        fails = data
+        if req.test_duration and req.test_duration > 0:
+            mask = data <= req.test_duration
+            fails = data[mask]
+            rc = np.full(int((~mask).sum()), req.test_duration)
+            if len(fails) < 2:
+                continue
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                fit = Fit_Weibull_2P(failures=fails,
+                                     right_censored=(rc if rc is not None and len(rc) else None),
+                                     show_probability_plot=False)
+            dist = fit.distribution
+            if req.metric == "B10":
+                est = float(dist.quantile(0.10))
+            else:  # reliability at target_time
+                est = float(dist.SF(xvals=np.asarray([req.target_time]))[0])
+        except Exception:
+            continue
+        if np.isfinite(est):
+            estimates.append(est)
+
+    if len(estimates) < 5:
+        raise HTTPException(status_code=500, detail="Simulation produced too few valid fits.")
+    arr = np.asarray(estimates, dtype=float)
+    lo = float(np.percentile(arr, 100 * (1.0 - 0.9) / 2.0))
+    hi = float(np.percentile(arr, 100 * (1.0 - (1.0 - 0.9) / 2.0)))
+    prob_meet = None
+    if req.target_value is not None:
+        if req.metric == "reliability":
+            prob_meet = float(np.mean(arr >= req.target_value))
+        else:
+            prob_meet = float(np.mean(arr >= req.target_value))
+    # histogram
+    counts, edges = np.histogram(arr, bins=min(30, max(10, len(arr) // 20)))
+    return {
+        "metric": req.metric, "n_valid": len(estimates), "num_simulations": n_sims,
+        "mean": round(float(np.mean(arr)), 6),
+        "median": round(float(np.median(arr)), 6),
+        "std": round(float(np.std(arr, ddof=1)), 6),
+        "p5": round(lo, 6), "p95": round(hi, 6),
+        "prob_meet_target": (round(prob_meet, 4) if prob_meet is not None else None),
+        "target_value": req.target_value,
+        "histogram": {"counts": counts.tolist(), "edges": edges.tolist()},
     }

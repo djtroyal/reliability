@@ -12,6 +12,7 @@ import {
 import { useFolioState, useUnits } from '../../store/project'
 import FolioBar from '../shared/FolioBar'
 import ReliabilityTestingTools from './ReliabilityTestingTools'
+import ALTTestTypes from './ALTTestTypes'
 
 const ALL_MODELS = [
   'Weibull_Exponential','Weibull_Eyring','Weibull_Power',
@@ -246,7 +247,7 @@ export default function ALT() {
   const [error, setError] = useState<string | null>(null)
   // Top-level view: Accelerated Life Testing (life-stress fitting/planning) vs
   // the Reliability Testing tool suite.
-  const [topView, setTopView] = useState<'alt' | 'testing'>('alt')
+  const [topView, setTopView] = useState<'alt' | 'tests' | 'testing'>('alt')
   const tableRef = useRef<HTMLDivElement>(null)
 
   // Sort state for the data table (display-only)
@@ -474,7 +475,7 @@ export default function ALT() {
       <FolioBar api={folios} />
       {/* Top-level view switcher */}
       <div className="flex items-stretch gap-1 bg-white border-b border-gray-200 px-3">
-        {([['alt', 'Accelerated Life Testing'], ['testing', 'Reliability Testing']] as const).map(([v, lbl]) => (
+        {([['alt', 'Accelerated Life Testing'], ['tests', 'ALT Test Types'], ['testing', 'Reliability Testing']] as const).map(([v, lbl]) => (
           <button
             key={v}
             onClick={() => setTopView(v)}
@@ -487,6 +488,8 @@ export default function ALT() {
 
       {topView === 'testing' ? (
         <ReliabilityTestingTools />
+      ) : topView === 'tests' ? (
+        <ALTTestTypes />
       ) : (
       <div className="flex flex-1 min-h-0">
       {/* Left panel */}

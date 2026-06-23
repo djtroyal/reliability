@@ -1,11 +1,14 @@
 import { useState } from 'react'
 import Plot from '../shared/ExportablePlot'
-import { Play } from 'lucide-react'
+import { Play, Plus, Trash2 } from 'lucide-react'
 import {
   oneSampleProportion, twoProportionTest, sampleSizeNoFailures,
   sequentialSampling, SequentialSamplingResponse,
   testPlanner, testDuration, goodnessOfFit, GoodnessOfFitResponse,
   computePassProbability, PassProbResponse,
+  degradationAnalysis, DegradationResponse,
+  essAnalysis, ESSResponse, hassAnalysis, HASSResponse,
+  burnInAnalysis, BurnInResponse,
 } from '../../api/client'
 import InfoLabel from '../shared/InfoLabel'
 
@@ -43,8 +46,18 @@ const RT_TOOLS = [
   { id: 'two-proportion', label: 'Two-Proportion Test' },
   { id: 'sequential', label: 'Sequential Sampling' },
   { id: 'gof', label: 'Goodness of Fit' },
+  { id: 'degradation', label: 'Degradation Testing' },
+  { id: 'ess', label: 'ESS Screening' },
+  { id: 'hass', label: 'HASS Screening' },
+  { id: 'burn-in', label: 'Burn-In Design' },
 ] as const
 type RTTool = typeof RT_TOOLS[number]['id']
+
+const PLOT_CFG = { responsive: true, displayModeBar: true } as const
+const plotBase = {
+  margin: { t: 30, r: 20, b: 45, l: 55 },
+  paper_bgcolor: 'white', plot_bgcolor: 'white',
+}
 
 // ─── Exponential test planner ────────────────────────────────────────────────
 
@@ -454,7 +467,415 @@ function GoF() {
   )
 }
 
+// ─── Degradation (wear-to-failure) ───────────────────────────────────────────
+
+interface DegRow { unit: string; time: string; meas: string }
+const SAMPLE_DEG: DegRow[] = [
+  { unit: 'A', time: '0', meas: '0' }, { unit: 'A', time: '100', meas: '20' },
+  { unit: 'A', time: '200', meas: '38' }, { unit: 'A', time: '300', meas: '61' },
+  { unit: 'B', time: '0', meas: '0' }, { unit: 'B', time: '100', meas: '25' },
+  { unit: 'B', time: '200', meas: '46' }, { unit: 'B', time: '300', meas: '72' },
+  { unit: 'C', time: '0', meas: '0' }, { unit: 'C', time: '100', meas: '18' },
+  { unit: 'C', time: '200', meas: '35' }, { unit: 'C', time: '300', meas: '55' },
+]
+
+function Degradation() {
+  const [rows, setRows] = useState<DegRow[]>(SAMPLE_DEG)
+  const [threshold, setThreshold] = useState('100')
+  const [direction, setDirection] = useState<'above' | 'below'>('above')
+  const [model, setModel] = useState('linear')
+  const [dist, setDist] = useState('Weibull_2P')
+  const [res, setRes] = useState<DegradationResponse | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  const update = (i: number, k: keyof DegRow, v: string) =>
+    setRows(rows.map((r, j) => j === i ? { ...r, [k]: v } : r))
+  const addRow = () => setRows([...rows, { unit: '', time: '', meas: '' }])
+  const delRow = (i: number) => setRows(rows.filter((_, j) => j !== i))
+
+  const run = async () => {
+    setErr(null); setLoading(true)
+    try {
+      const valid = rows.filter(r => r.unit.trim() && r.time.trim() && r.meas.trim())
+      const r = await degradationAnalysis({
+        unit_ids: valid.map(v => v.unit.trim()),
+        times: valid.map(v => parseFloat(v.time)),
+        measurements: valid.map(v => parseFloat(v.meas)),
+        threshold: parseFloat(threshold),
+        threshold_direction: direction,
+        degradation_model: model,
+        life_distribution: dist,
+      })
+      setRes(r)
+    } catch (e) { setErr(detail(e, 'Analysis failed')) } finally { setLoading(false) }
+  }
+
+  const PALETTE = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#6366f1']
+  const pathTraces = res ? res.paths.flatMap((p, i) => {
+    const c = PALETTE[i % PALETTE.length]
+    const traces: Record<string, unknown>[] = [
+      { x: p.t, y: p.m, mode: 'markers', name: p.unit_id, marker: { color: c, size: 6 }, legendgroup: p.unit_id },
+    ]
+    if (p.fit_t && p.fit_m) traces.push({
+      x: p.fit_t, y: p.fit_m, mode: 'lines', name: `${p.unit_id} fit`,
+      line: { color: c, width: 1.5, dash: 'dot' }, legendgroup: p.unit_id, showlegend: false,
+    })
+    return traces
+  }) : []
+
+  const controls = (
+    <>
+      <div>
+        <InfoLabel tip="Repeated degradation measurements per unit. Each unit's path is fitted and extrapolated to the failure threshold.">Measurement data</InfoLabel>
+        <div className="border border-gray-200 rounded overflow-hidden">
+          <div className="max-h-52 overflow-y-auto">
+            <table className="w-full text-xs">
+              <thead className="bg-gray-50 sticky top-0">
+                <tr>
+                  <th className="px-1 py-1 text-left font-medium text-gray-500">Unit</th>
+                  <th className="px-1 py-1 text-left font-medium text-gray-500">Time</th>
+                  <th className="px-1 py-1 text-left font-medium text-gray-500">Meas.</th>
+                  <th className="w-6"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r, i) => (
+                  <tr key={i} className="border-t border-gray-100 group">
+                    <td className="px-0.5 py-0.5"><input value={r.unit} onChange={e => update(i, 'unit', e.target.value)} className="w-full text-xs px-1 py-0.5 border-0 bg-transparent focus:ring-1 focus:ring-blue-400 rounded font-mono" placeholder="ID" /></td>
+                    <td className="px-0.5 py-0.5"><input value={r.time} onChange={e => update(i, 'time', e.target.value)} className="w-full text-xs px-1 py-0.5 border-0 bg-transparent focus:ring-1 focus:ring-blue-400 rounded font-mono" placeholder="0" /></td>
+                    <td className="px-0.5 py-0.5"><input value={r.meas} onChange={e => update(i, 'meas', e.target.value)} className="w-full text-xs px-1 py-0.5 border-0 bg-transparent focus:ring-1 focus:ring-blue-400 rounded font-mono" placeholder="0" /></td>
+                    <td className="px-0.5 text-center"><button tabIndex={-1} onClick={() => delRow(i)} className="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100"><Trash2 size={11} /></button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <button onClick={addRow} className="w-full text-xs text-blue-600 hover:bg-blue-50 py-1 flex items-center justify-center gap-1 border-t border-gray-100"><Plus size={11} /> Add row</button>
+        </div>
+      </div>
+      <Field label="Failure threshold" tip="Measurement value at which a unit is considered failed." value={threshold} onChange={setThreshold} />
+      <div>
+        <label className={labelCls}>Failure direction</label>
+        <select value={direction} onChange={e => setDirection(e.target.value as 'above' | 'below')} className={inputCls}>
+          <option value="above">Fails when above threshold</option>
+          <option value="below">Fails when below threshold</option>
+        </select>
+      </div>
+      <div>
+        <label className={labelCls}>Degradation model</label>
+        <select value={model} onChange={e => setModel(e.target.value)} className={inputCls}>
+          <option value="linear">Linear</option>
+          <option value="exponential">Exponential</option>
+          <option value="power">Power</option>
+          <option value="logarithmic">Logarithmic</option>
+        </select>
+      </div>
+      <div>
+        <label className={labelCls}>Life distribution</label>
+        <select value={dist} onChange={e => setDist(e.target.value)} className={inputCls}>
+          <option value="Weibull_2P">Weibull</option>
+          <option value="Normal_2P">Normal</option>
+          <option value="Lognormal_2P">Lognormal</option>
+        </select>
+      </div>
+    </>
+  )
+
+  const results = res && (
+    <div className="space-y-5">
+      {res.distribution_fit && (
+        <div className="grid grid-cols-4 gap-3">
+          <Card label="Mean life" value={fmtNum(res.distribution_fit.summary.mean)} accent />
+          <Card label="B50 (median)" value={fmtNum(res.distribution_fit.summary.B50)} />
+          <Card label="B10 life" value={fmtNum(res.distribution_fit.summary.B10)} />
+          <Card label="Units" value={String(res.unit_table.length)} />
+        </div>
+      )}
+      <div>
+        <p className="text-xs font-semibold text-gray-600 mb-1">Degradation paths</p>
+        <Plot
+          data={[
+            ...pathTraces,
+            { x: [Math.min(...res.paths.flatMap(p => p.t)), Math.max(...res.paths.flatMap(p => [...p.t, ...(p.fit_t ?? [])]))],
+              y: [res.threshold, res.threshold], mode: 'lines', name: 'Threshold',
+              line: { color: '#9ca3af', width: 1.5, dash: 'dash' } },
+          ] as Plotly.Data[]}
+          layout={{ ...plotBase, height: 320, xaxis: { title: { text: 'Time' } }, yaxis: { title: { text: 'Measurement' } } } as Plotly.Layout}
+          config={PLOT_CFG} style={{ width: '100%' }} useResizeHandler />
+      </div>
+      {res.distribution_fit && (
+        <div>
+          <p className="text-xs font-semibold text-gray-600 mb-1">Projected failure-time distribution (CDF)</p>
+          <Plot
+            data={[{ x: res.distribution_fit.curve_x, y: res.distribution_fit.cdf, mode: 'lines', line: { color: '#3b82f6', width: 2 }, name: 'CDF' }] as Plotly.Data[]}
+            layout={{ ...plotBase, height: 260, xaxis: { title: { text: 'Time to failure' } }, yaxis: { title: { text: 'Unreliability' }, range: [0, 1] } } as Plotly.Layout}
+            config={PLOT_CFG} style={{ width: '100%' }} useResizeHandler />
+        </div>
+      )}
+      <div>
+        <p className="text-xs font-semibold text-gray-600 mb-1">Per-unit projections</p>
+        <table className="w-full text-xs border border-gray-200 rounded">
+          <thead className="bg-gray-50"><tr>
+            <th className="px-3 py-1.5 text-left font-medium text-gray-600">Unit</th>
+            <th className="px-3 py-1.5 text-right font-medium text-gray-600">Projected failure</th>
+            <th className="px-3 py-1.5 text-right font-medium text-gray-600">R²</th>
+          </tr></thead>
+          <tbody>
+            {res.unit_table.map(u => (
+              <tr key={u.unit_id} className="border-t border-gray-100">
+                <td className="px-3 py-1 text-gray-700">{u.unit_id}</td>
+                <td className="px-3 py-1 text-right font-mono">{u.projected_failure != null ? fmtNum(u.projected_failure) : '—'}</td>
+                <td className="px-3 py-1 text-right font-mono">{u.r2 != null ? u.r2.toFixed(4) : '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+
+  return <ToolLayout intro="Estimate a lifetime distribution from degradation (wear) measurements without waiting for actual failures. Each unit's degradation path is fitted and extrapolated to the failure threshold." controls={controls} err={err} loading={loading} onRun={run} runLabel="Analyze" results={results} />
+}
+
+// ─── ESS (Environmental Stress Screening) ────────────────────────────────────
+
+function ESS() {
+  const [defectRate, setDefectRate] = useState('0.05')
+  const [target, setTarget] = useState('0.9')
+  const [type, setType] = useState<'thermal' | 'vibration' | 'combined'>('thermal')
+  const [tempRange, setTempRange] = useState('80')
+  const [cycles, setCycles] = useState('10')
+  const [grms, setGrms] = useState('6')
+  const [vibDur, setVibDur] = useState('10')
+  const [res, setRes] = useState<ESSResponse | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  const run = async () => {
+    setErr(null); setLoading(true)
+    try {
+      const r = await essAnalysis({
+        defect_rate: parseFloat(defectRate),
+        target_screening_strength: parseFloat(target),
+        screening_type: type,
+        temp_range: type !== 'vibration' ? parseFloat(tempRange) : null,
+        num_cycles: type !== 'vibration' ? parseInt(cycles, 10) : null,
+        grms: type !== 'thermal' ? parseFloat(grms) : null,
+        vib_duration: type !== 'thermal' ? parseFloat(vibDur) : null,
+      })
+      setRes(r)
+    } catch (e) { setErr(detail(e, 'Analysis failed')) } finally { setLoading(false) }
+  }
+
+  const controls = (
+    <>
+      <Field label="Incoming defect rate" tip="Fraction of units arriving with latent defects (0-1)." value={defectRate} onChange={setDefectRate} />
+      <Field label="Target screening strength" tip="Desired fraction of latent defects precipitated (0-1)." value={target} onChange={setTarget} />
+      <div>
+        <label className={labelCls}>Screening type</label>
+        <select value={type} onChange={e => setType(e.target.value as typeof type)} className={inputCls}>
+          <option value="thermal">Thermal cycling</option>
+          <option value="vibration">Random vibration</option>
+          <option value="combined">Combined</option>
+        </select>
+      </div>
+      {type !== 'vibration' && <>
+        <Field label="Temperature range ΔT (°C)" value={tempRange} onChange={setTempRange} />
+        <Field label="Number of cycles" value={cycles} onChange={setCycles} />
+      </>}
+      {type !== 'thermal' && <>
+        <Field label="Vibration level (gRMS)" value={grms} onChange={setGrms} />
+        <Field label="Vibration duration (min)" value={vibDur} onChange={setVibDur} />
+      </>}
+    </>
+  )
+
+  const results = res && (
+    <div className="space-y-5">
+      <div className="grid grid-cols-3 gap-3">
+        <Card label="Screening strength" value={`${(res.screening_strength * 100).toFixed(1)}%`} accent />
+        <Card label={`Required ${res.required_label.toLowerCase()}`} value={res.required != null ? fmtNum(res.required) : '—'} />
+        <Card label="Residual defect fraction" value={res.residual_defect_fraction.toExponential(2)} />
+      </div>
+      <div>
+        <p className="text-xs font-semibold text-gray-600 mb-1">Screening strength vs {res.curve.x_label.toLowerCase()}</p>
+        <Plot
+          data={[
+            { x: res.curve.x, y: res.curve.y, mode: 'lines', line: { color: '#3b82f6', width: 2 }, name: 'Screening strength' },
+            { x: [res.curve.x[0], res.curve.x[res.curve.x.length - 1]], y: [res.curve.target, res.curve.target], mode: 'lines', line: { color: '#ef4444', width: 1.5, dash: 'dash' }, name: 'Target' },
+          ] as Plotly.Data[]}
+          layout={{ ...plotBase, height: 320, xaxis: { title: { text: res.curve.x_label } }, yaxis: { title: { text: 'Screening strength' }, range: [0, 1] } } as Plotly.Layout}
+          config={PLOT_CFG} style={{ width: '100%' }} useResizeHandler />
+      </div>
+      <p className="text-xs text-gray-500">Detected defect fraction: {res.detected_defect_fraction.toExponential(3)} of incoming population.</p>
+    </div>
+  )
+
+  return <ToolLayout intro="Develop an Environmental Stress Screening (ESS) profile that precipitates latent manufacturing defects. Uses standard thermal-cycling and random-vibration screening-strength models." controls={controls} err={err} loading={loading} onRun={run} runLabel="Compute profile" results={results} />
+}
+
+// ─── HASS (Highly Accelerated Stress Screening) ──────────────────────────────
+
+function HASS() {
+  const [opLow, setOpLow] = useState('-40')
+  const [opHigh, setOpHigh] = useState('85')
+  const [dsLow, setDsLow] = useState('-60')
+  const [dsHigh, setDsHigh] = useState('120')
+  const [opVib, setOpVib] = useState('10')
+  const [dsVib, setDsVib] = useState('30')
+  const [precip, setPrecip] = useState('0.9')
+  const [detDur, setDetDur] = useState('24')
+  const [mtbf, setMtbf] = useState('5000')
+  const [res, setRes] = useState<HASSResponse | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  const run = async () => {
+    setErr(null); setLoading(true)
+    try {
+      const r = await hassAnalysis({
+        op_temp_low: parseFloat(opLow), op_temp_high: parseFloat(opHigh),
+        destruct_temp_low: parseFloat(dsLow), destruct_temp_high: parseFloat(dsHigh),
+        op_vib: parseFloat(opVib), destruct_vib: parseFloat(dsVib),
+        target_precip_ss: parseFloat(precip), detection_duration: parseFloat(detDur),
+        use_mtbf: parseFloat(mtbf),
+      })
+      setRes(r)
+    } catch (e) { setErr(detail(e, 'Analysis failed')) } finally { setLoading(false) }
+  }
+
+  const controls = (
+    <>
+      <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Operating limits (HALT)</p>
+      <div className="grid grid-cols-2 gap-2">
+        <Field label="Temp low (°C)" value={opLow} onChange={setOpLow} />
+        <Field label="Temp high (°C)" value={opHigh} onChange={setOpHigh} />
+      </div>
+      <Field label="Vibration (gRMS)" value={opVib} onChange={setOpVib} />
+      <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Destruct limits (HALT)</p>
+      <div className="grid grid-cols-2 gap-2">
+        <Field label="Temp low (°C)" value={dsLow} onChange={setDsLow} />
+        <Field label="Temp high (°C)" value={dsHigh} onChange={setDsHigh} />
+      </div>
+      <Field label="Vibration (gRMS)" value={dsVib} onChange={setDsVib} />
+      <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Screen targets</p>
+      <Field label="Precipitation strength" tip="Target fraction of defects precipitated by the precipitation screen." value={precip} onChange={setPrecip} />
+      <Field label="Detection duration (h)" value={detDur} onChange={setDetDur} />
+      <Field label="Use-condition MTBF (h)" value={mtbf} onChange={setMtbf} />
+    </>
+  )
+
+  const results = res && (
+    <div className="space-y-5">
+      <div className="grid grid-cols-3 gap-3">
+        <Card label="Precip. cycles" value={res.precipitation_screen.required_cycles != null ? fmtNum(res.precipitation_screen.required_cycles) : '—'} accent />
+        <Card label="Precip. strength" value={`${(res.precipitation_screen.screening_strength * 100).toFixed(1)}%`} />
+        <Card label="P(detect)" value={`${(res.detection_screen.probability_of_detection * 100).toFixed(2)}%`} />
+      </div>
+      <div>
+        <p className="text-xs font-semibold text-gray-600 mb-1">Stress level diagram (temperature)</p>
+        <Plot
+          data={[
+            { x: ['Destruct', 'Precipitation', 'Operating', 'Operating', 'Precipitation', 'Destruct'],
+              y: [res.stress_levels.destruct[1], res.stress_levels.precipitation[1], res.stress_levels.operating[1],
+                  res.stress_levels.operating[0], res.stress_levels.precipitation[0], res.stress_levels.destruct[0]],
+              type: 'bar', marker: { color: ['#fca5a5', '#fdba74', '#86efac', '#86efac', '#fdba74', '#fca5a5'] }, name: 'Temp (°C)' },
+          ] as Plotly.Data[]}
+          layout={{ ...plotBase, height: 300, yaxis: { title: { text: 'Temperature (°C)' } } } as Plotly.Layout}
+          config={PLOT_CFG} style={{ width: '100%' }} useResizeHandler />
+      </div>
+      <div className="grid grid-cols-2 gap-4 text-xs">
+        <div className="border border-gray-200 rounded p-3">
+          <p className="font-semibold text-gray-700 mb-1">Precipitation screen</p>
+          <p>ΔT: {res.precipitation_screen.delta_t} °C ({res.precipitation_screen.temp_low} to {res.precipitation_screen.temp_high})</p>
+          <p>Vibration: {res.precipitation_screen.vibration} gRMS</p>
+        </div>
+        <div className="border border-gray-200 rounded p-3">
+          <p className="font-semibold text-gray-700 mb-1">Detection screen</p>
+          <p>ΔT: {res.detection_screen.delta_t} °C ({res.detection_screen.temp_low} to {res.detection_screen.temp_high})</p>
+          <p>Duration: {res.detection_screen.duration} h</p>
+        </div>
+      </div>
+    </div>
+  )
+
+  return <ToolLayout intro="Design a Highly Accelerated Stress Screen (HASS) using product operating and destruct limits from HALT. Generates a precipitation screen (defect generation) and a detection screen (fault detection)." controls={controls} err={err} loading={loading} onRun={run} runLabel="Design screen" results={results} />
+}
+
+// ─── Burn-In design ──────────────────────────────────────────────────────────
+
+function BurnIn() {
+  const [duration, setDuration] = useState('48')
+  const [beta, setBeta] = useState('0.5')
+  const [eta, setEta] = useState('10000')
+  const [units, setUnits] = useState('100')
+  const [af, setAf] = useState('1')
+  const [res, setRes] = useState<BurnInResponse | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  const run = async () => {
+    setErr(null); setLoading(true)
+    try {
+      const r = await burnInAnalysis({
+        duration: parseFloat(duration), beta: parseFloat(beta), eta: parseFloat(eta),
+        n_units: parseInt(units, 10), acceleration_factor: parseFloat(af),
+      })
+      setRes(r)
+    } catch (e) { setErr(detail(e, 'Analysis failed')) } finally { setLoading(false) }
+  }
+
+  const controls = (
+    <>
+      <Field label="Burn-in duration (h)" value={duration} onChange={setDuration} />
+      <Field label="Weibull shape β" tip="Infant-mortality period has β < 1." value={beta} onChange={setBeta} />
+      <Field label="Characteristic life η (h)" value={eta} onChange={setEta} />
+      <Field label="Number of units" value={units} onChange={setUnits} />
+      <Field label="Acceleration factor" tip="Stress acceleration during burn-in vs use conditions." value={af} onChange={setAf} />
+    </>
+  )
+
+  const results = res && (
+    <div className="space-y-5">
+      <div className="grid grid-cols-3 gap-3">
+        <Card label="Expected failures" value={fmtNum(res.expected_failures)} accent />
+        <Card label="Survival probability" value={`${(res.survival_probability * 100).toFixed(2)}%`} />
+        <Card label="Post burn-in MTBF" value={fmtNum(res.post_burn_in_mtbf)} />
+      </div>
+      <div>
+        <p className="text-xs font-semibold text-gray-600 mb-1">Reliability: before vs after burn-in</p>
+        <Plot
+          data={[
+            { x: res.reliability_plot.time, y: res.reliability_plot.before, mode: 'lines', line: { color: '#9ca3af', width: 1.5, dash: 'dash' }, name: 'Before' },
+            { x: res.reliability_plot.time, y: res.reliability_plot.after, mode: 'lines', line: { color: '#3b82f6', width: 2 }, name: 'After burn-in' },
+          ] as Plotly.Data[]}
+          layout={{ ...plotBase, height: 300, xaxis: { title: { text: 'Time (h)' } }, yaxis: { title: { text: 'Reliability' }, range: [0, 1] } } as Plotly.Layout}
+          config={PLOT_CFG} style={{ width: '100%' }} useResizeHandler />
+      </div>
+      <div>
+        <p className="text-xs font-semibold text-gray-600 mb-1">Hazard rate: before vs after burn-in</p>
+        <Plot
+          data={[
+            { x: res.hazard_plot.time, y: res.hazard_plot.before, mode: 'lines', line: { color: '#9ca3af', width: 1.5, dash: 'dash' }, name: 'Before' },
+            { x: res.hazard_plot.time, y: res.hazard_plot.after, mode: 'lines', line: { color: '#ef4444', width: 2 }, name: 'After burn-in' },
+          ] as Plotly.Data[]}
+          layout={{ ...plotBase, height: 260, xaxis: { title: { text: 'Time (h)' } }, yaxis: { title: { text: 'Hazard rate' } } } as Plotly.Layout}
+          config={PLOT_CFG} style={{ width: '100%' }} useResizeHandler />
+      </div>
+    </div>
+  )
+
+  return <ToolLayout intro="Design a burn-in test to remove infant-mortality failures (Weibull β < 1). Shows expected fallout, survival probability, and the reduced hazard rate of the surviving population." controls={controls} err={err} loading={loading} onRun={run} runLabel="Compute" results={results} />
+}
+
 // ─── Shared layout ───────────────────────────────────────────────────────────
+
+function fmtNum(v: number | null | undefined): string {
+  if (v == null || !isFinite(v)) return '—'
+  if (Math.abs(v) >= 1000 || (Math.abs(v) < 0.01 && v !== 0)) return v.toExponential(2)
+  return v.toFixed(2)
+}
 
 function ToolLayout({ intro, controls, err, loading, onRun, runLabel, results }: {
   intro: string; controls: React.ReactNode; err: string | null; loading: boolean
@@ -498,6 +919,10 @@ export default function ReliabilityTestingTools() {
       {tool === 'two-proportion' && <TwoProportion />}
       {tool === 'sequential' && <Sequential />}
       {tool === 'gof' && <GoF />}
+      {tool === 'degradation' && <Degradation />}
+      {tool === 'ess' && <ESS />}
+      {tool === 'hass' && <HASS />}
+      {tool === 'burn-in' && <BurnIn />}
     </div>
   )
 }

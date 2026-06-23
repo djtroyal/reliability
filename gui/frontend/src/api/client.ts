@@ -568,6 +568,147 @@ export const computePassProbability = (req: {
   oc_mtbf_min?: number; oc_mtbf_max?: number; oc_points?: number
 }) => api.post<PassProbResponse>('/alt/pass-probability', req).then(r => r.data)
 
+// --- ALT test types: step-stress, HALT, margin, multi-stress ---
+
+export interface DistFit {
+  distribution: string
+  params: Record<string, number>
+  curve_x: number[]
+  pdf: number[]
+  cdf: number[]
+  summary: { mean: number; median: number | null; B10: number | null; B50: number | null }
+}
+
+export interface DegradationResponse {
+  paths: { unit_id: string; t: number[]; m: number[]; fit_t: number[] | null; fit_m: number[] | null }[]
+  threshold: number
+  threshold_direction: string
+  projected_failure_times: number[]
+  distribution_fit: DistFit | null
+  unit_table: { unit_id: string; projected_failure: number | null; r2: number | null }[]
+}
+
+export const degradationAnalysis = (req: {
+  unit_ids: string[]; times: number[]; measurements: number[]
+  threshold: number; threshold_direction: string
+  degradation_model: string; life_distribution: string
+}) => api.post<DegradationResponse>('/alt/degradation', req).then(r => r.data)
+
+export interface StepStressResponse {
+  exponent_p: number
+  ref_stress: number
+  equivalent_times: number[]
+  distribution_fit: DistFit
+  cumulative_plot: { time: number[]; cum_fraction: number[]; step_boundaries: number[] }
+  use_level_stress: number | null
+}
+
+export const stepStressAnalysis = (req: {
+  failure_times: number[]; stress_at_failure: number[]
+  steps: { stress: number; duration: number }[]
+  use_level_stress?: number | null; distribution: string
+}) => api.post<StepStressResponse>('/alt/step-stress', req).then(r => r.data)
+
+export interface HALTResponse {
+  stress_type: string
+  operating_limit: number | null
+  destruct_limit: number | null
+  spec_min: number | null
+  spec_max: number | null
+  operating_margin: number | null
+  destruct_margin: number | null
+  capability_plot: { levels: number[]; outcomes: string[] }
+}
+
+export const haltAnalysis = (req: {
+  stress_levels: number[]; outcomes: string[]; stress_type: string
+  spec_min?: number | null; spec_max?: number | null
+}) => api.post<HALTResponse>('/alt/halt', req).then(r => r.data)
+
+export interface MarginTestResponse {
+  acceleration_factor: number
+  equivalent_time_at_spec: number
+  demonstrated_reliability: number
+  reliability_lower_bound: number
+  confidence: number
+  mtbf_at_spec: number | null
+  margin_ratio: number | null
+}
+
+export const marginTestAnalysis = (req: {
+  n_units: number; n_failures: number; test_duration: number
+  test_stress: number; spec_stress: number
+  acceleration_factor?: number | null; confidence: number
+}) => api.post<MarginTestResponse>('/alt/margin-test', req).then(r => r.data)
+
+export interface MultiStressResponse {
+  stress1_label: string
+  stress2_label: string
+  combo_table: { stress1: number; stress2: number; n: number; median_life: number; mean_life: number }[]
+  scatter: { stress1: number[]; stress2: number[]; life: number[] }
+  regression_coeffs: number[] | null
+  use_level_life: number | null
+  stress1_use: number | null
+  stress2_use: number | null
+}
+
+export const multiStressAnalysis = (req: {
+  failure_times: number[]; stress1: number[]; stress2: number[]
+  stress1_use?: number | null; stress2_use?: number | null
+  stress1_label: string; stress2_label: string
+}) => api.post<MultiStressResponse>('/alt/multi-stress', req).then(r => r.data)
+
+// --- Stress screening: ESS / HASS / Burn-in ---
+
+export interface ESSResponse {
+  screening_type: string
+  screening_strength: number
+  required: number | null
+  required_label: string
+  detected_defect_fraction: number
+  residual_defect_fraction: number
+  curve: { x: number[]; y: number[]; x_label: string; target: number }
+}
+
+export const essAnalysis = (req: {
+  defect_rate: number; target_screening_strength: number; screening_type: string
+  temp_range?: number | null; ramp_rate?: number | null; num_cycles?: number | null
+  dwell_time?: number | null; grms?: number | null; vib_duration?: number | null
+}) => api.post<ESSResponse>('/alt/ess', req).then(r => r.data)
+
+export interface HASSResponse {
+  precipitation_screen: {
+    temp_low: number; temp_high: number; delta_t: number; vibration: number
+    required_cycles: number | null; screening_strength: number
+  }
+  detection_screen: {
+    temp_low: number; temp_high: number; delta_t: number; vibration: number
+    duration: number; probability_of_detection: number
+  }
+  stress_levels: { operating: number[]; precipitation: number[]; destruct: number[] }
+}
+
+export const hassAnalysis = (req: {
+  op_temp_low: number; op_temp_high: number
+  destruct_temp_low: number; destruct_temp_high: number
+  op_vib: number; destruct_vib: number
+  target_precip_ss: number; detection_duration: number; use_mtbf: number
+}) => api.post<HASSResponse>('/alt/hass', req).then(r => r.data)
+
+export interface BurnInResponse {
+  effective_burn_in_time: number
+  survival_probability: number
+  expected_failures: number
+  post_burn_in_mtbf: number
+  reliability_plot: { time: number[]; before: number[]; after: number[] }
+  hazard_plot: { time: number[]; before: number[]; after: number[] }
+}
+
+export const burnInAnalysis = (req: {
+  duration: number; beta: number; eta: number; n_units: number
+  temperature?: number | null; acceleration_factor: number; use_temperature?: number | null
+}) => api.post<BurnInResponse>('/alt/burn-in', req).then(r => r.data)
+
 // --- Physics of Failure ---
 
 export interface SNCurveResponse {

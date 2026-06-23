@@ -97,6 +97,94 @@ class ALTFitRequest(BaseModel):
     sort_by: str = "AICc"
 
 
+class StepStressRequest(BaseModel):
+    """Step-stress ALT using cumulative exposure model."""
+    failure_times: list[float]
+    stress_at_failure: list[float]
+    steps: list[dict]  # [{stress: float, duration: float}, ...]
+    use_level_stress: Optional[float] = None
+    distribution: str = "Weibull"
+
+
+class HALTRequest(BaseModel):
+    """Highly Accelerated Life Test — find operating/destruct limits."""
+    stress_levels: list[float]
+    outcomes: list[str]  # "pass", "fail", "anomaly"
+    stress_type: str = "temperature"  # "temperature", "vibration", "combined"
+    spec_min: Optional[float] = None
+    spec_max: Optional[float] = None
+
+
+class MarginTestRequest(BaseModel):
+    """Margin test — demonstrate reliability at conditions beyond spec."""
+    n_units: int
+    n_failures: int
+    test_duration: float
+    test_stress: float
+    spec_stress: float
+    acceleration_factor: Optional[float] = None
+    confidence: float = 0.95
+
+
+class MultiStressRequest(BaseModel):
+    """Multiple-stress ALT with two simultaneous stress variables."""
+    failure_times: list[float]
+    stress1: list[float]
+    stress2: list[float]
+    stress1_use: Optional[float] = None
+    stress2_use: Optional[float] = None
+    stress1_label: str = "Stress 1"
+    stress2_label: str = "Stress 2"
+
+
+class DegradationRequest(BaseModel):
+    """Degradation (wear-to-failure) analysis from repeated measurements."""
+    unit_ids: list[str]
+    times: list[float]
+    measurements: list[float]
+    threshold: float
+    threshold_direction: str = "above"   # "above" or "below"
+    degradation_model: str = "linear"     # linear, exponential, power, logarithmic
+    life_distribution: str = "Weibull_2P"  # Weibull_2P, Normal_2P, Lognormal_2P
+
+
+class ESSRequest(BaseModel):
+    """Environmental Stress Screening profile development."""
+    defect_rate: float                 # fraction defective (0-1)
+    target_screening_strength: float   # fraction of defects to detect (0-1)
+    screening_type: str = "thermal"    # "thermal", "vibration", "combined"
+    temp_range: Optional[float] = None     # ΔT in °C
+    ramp_rate: Optional[float] = None      # °C/min
+    num_cycles: Optional[int] = None
+    dwell_time: Optional[float] = None     # minutes
+    grms: Optional[float] = None
+    vib_duration: Optional[float] = None   # minutes
+
+
+class HASSRequest(BaseModel):
+    """Highly Accelerated Stress Screening profile development."""
+    op_temp_low: float
+    op_temp_high: float
+    destruct_temp_low: float
+    destruct_temp_high: float
+    op_vib: float
+    destruct_vib: float
+    target_precip_ss: float
+    detection_duration: float          # hours
+    use_mtbf: float                    # hours
+
+
+class BurnInRequest(BaseModel):
+    """Burn-in test design to screen infant-mortality failures."""
+    duration: float                    # burn-in duration (hours)
+    beta: float                        # Weibull shape parameter
+    eta: float                         # Weibull characteristic life (hours)
+    n_units: int
+    temperature: Optional[float] = None
+    acceleration_factor: float = 1.0
+    use_temperature: Optional[float] = None
+
+
 class OneSampleProportionRequest(BaseModel):
     trials: int
     successes: int

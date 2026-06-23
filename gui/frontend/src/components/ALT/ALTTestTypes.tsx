@@ -68,7 +68,7 @@ function ToolLayout({ intro, controls, err, loading, onRun, runLabel, results }:
 interface SSRow { time: string; stress: string }
 interface StepDef { stress: string; duration: string }
 
-function StepStress() {
+export function StepStress() {
   const [rows, setRows] = useState<SSRow[]>([
     { time: '120', stress: '85' }, { time: '340', stress: '85' },
     { time: '560', stress: '105' }, { time: '780', stress: '105' }, { time: '950', stress: '125' },
@@ -201,7 +201,7 @@ function StepStress() {
 
 interface MSRow { time: string; s1: string; s2: string }
 
-function MultiStress() {
+export function MultiStress() {
   const [rows, setRows] = useState<MSRow[]>([
     { time: '100', s1: '85', s2: '50' }, { time: '150', s1: '85', s2: '50' },
     { time: '80', s1: '105', s2: '70' }, { time: '120', s1: '105', s2: '70' },
@@ -327,7 +327,7 @@ function MultiStress() {
 
 interface HALTRow { stress: string; outcome: string }
 
-function HALT() {
+export function HALT() {
   const [rows, setRows] = useState<HALTRow[]>([
     { stress: '85', outcome: 'pass' }, { stress: '95', outcome: 'pass' },
     { stress: '105', outcome: 'anomaly' }, { stress: '115', outcome: 'pass' }, { stress: '125', outcome: 'fail' },
@@ -437,7 +437,7 @@ function HALT() {
 
 // ─── Margin Test ──────────────────────────────────────────────────────────────
 
-function MarginTest() {
+export function MarginTest() {
   const [nUnits, setNUnits] = useState('20')
   const [nFail, setNFail] = useState('0')
   const [dur, setDur] = useState('1000')

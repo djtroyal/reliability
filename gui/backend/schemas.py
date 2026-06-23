@@ -166,6 +166,72 @@ class DestructiveDegradationRequest(BaseModel):
     reliability_time: Optional[float] = None      # compute R(t)/F(t) at this time
 
 
+class ExpChiSquaredRDTRequest(BaseModel):
+    """Exponential chi-squared reliability demonstration test."""
+    metric: str = "reliability"          # "reliability" or "mttf"
+    reliability: float = 0.9             # demonstrated reliability (if metric=reliability)
+    demo_time: float = 100.0             # time at which reliability is demonstrated
+    mttf: float = 100.0                  # demonstrated MTTF (if metric=mttf)
+    confidence: float = 0.9
+    failures: int = 0                    # allowable failures
+    solve_for: str = "test_time"         # "test_time" (per unit) or "sample_size"
+    n: Optional[int] = None              # units (when solving test_time)
+    test_time: Optional[float] = None    # per-unit test time (when solving sample_size)
+
+
+class BayesianRDTRequest(BaseModel):
+    """Non-parametric Bayesian reliability demonstration test."""
+    solve_for: str = "sample_size"       # "sample_size", "reliability", "confidence"
+    reliability: float = 0.9             # target/required reliability
+    confidence: float = 0.8
+    failures: int = 0                    # allowed failures r in the demonstration test
+    n: Optional[int] = None              # sample size (when solving reliability/confidence)
+    prior_source: str = "expert"         # "expert" or "subsystem"
+    # Expert-opinion prior (worst/most-likely/best reliability)
+    worst: Optional[float] = None
+    likely: Optional[float] = None
+    best: Optional[float] = None
+    # Subsystem-test prior: series system of subsystems with (n, r)
+    subsystems: Optional[list[dict]] = None  # [{name, n, r}, ...]
+
+
+class ExpectedFailureTimesRequest(BaseModel):
+    """Expected failure times (with bounds) for a planned test."""
+    n: int                               # sample size
+    distribution: str = "Weibull"        # Weibull, Normal, Lognormal, Exponential
+    beta: float = 2.0                    # Weibull/Lognormal/Normal shape (sigma for N/LN)
+    eta: float = 500.0                   # Weibull scale / Normal mu / Lognormal mu / Exp MTTF
+    confidence: float = 0.8              # 2-sided confidence level for the bounds
+
+
+class DifferenceDetectionRequest(BaseModel):
+    """Difference detection matrix for comparing two designs' life metric."""
+    metric: str = "B10"                  # "B10" or "mean"
+    confidence: float = 0.9
+    design1_beta: float = 3.0
+    design1_n: int = 20
+    design2_beta: float = 2.0
+    design2_n: int = 20
+    metric_min: float = 500.0
+    metric_max: float = 3000.0
+    metric_increment: float = 500.0
+    test_times: list[float] = []         # candidate test durations, ascending
+
+
+class TestSimulationRequest(BaseModel):
+    """Monte-Carlo simulation of a reliability test design."""
+    distribution: str = "Weibull"        # Weibull, Normal, Lognormal, Exponential
+    beta: float = 2.0
+    eta: float = 1000.0
+    n: int = 20                          # sample size
+    test_duration: Optional[float] = None  # time-terminated test (suspend survivors)
+    num_simulations: int = 1000
+    metric: str = "reliability"          # "reliability" (at target_time) or "B10"
+    target_time: float = 500.0           # time for the reliability metric
+    target_value: Optional[float] = None  # success threshold for the metric
+    seed: Optional[int] = None
+
+
 class ESSRequest(BaseModel):
     """Environmental Stress Screening profile development."""
     defect_rate: float                 # fraction defective (0-1)

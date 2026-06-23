@@ -626,6 +626,77 @@ export const destructiveDegradationAnalysis = (req: {
   reliability_time?: number | null
 }) => api.post<DestructiveDegradationResponse>('/alt/degradation-destructive', req).then(r => r.data)
 
+// --- Reliability Demonstration Testing (RDT) ---
+
+export interface ExpChiSquaredResponse {
+  metric: string; confidence: number; failures: number
+  chi_squared: number; accumulated_test_time: number; implied_mttf: number
+  sample_size?: number; test_time?: number
+}
+
+export const rdtExponentialChiSquared = (req: {
+  metric: string; reliability?: number; demo_time?: number; mttf?: number
+  confidence: number; failures: number; solve_for: string
+  n?: number | null; test_time?: number | null
+}) => api.post<ExpChiSquaredResponse>('/alt/rdt/exponential-chi-squared', req).then(r => r.data)
+
+export interface BayesianRDTResponse {
+  prior_source: string; E_R0: number; Var_R0: number
+  alpha0: number; beta0: number; solve_for: string; failures: number
+  n?: number; confidence?: number; reliability?: number
+  sample_size?: number; posterior_alpha?: number; posterior_beta?: number
+}
+
+export const rdtBayesian = (req: {
+  solve_for: string; reliability?: number; confidence?: number; failures: number
+  n?: number | null; prior_source: string
+  worst?: number | null; likely?: number | null; best?: number | null
+  subsystems?: { name?: string; n: number; r: number }[] | null
+}) => api.post<BayesianRDTResponse>('/alt/rdt/bayesian', req).then(r => r.data)
+
+export interface ExpectedFailureTimesResponse {
+  n: number; distribution: string; beta: number; eta: number; confidence: number
+  rows: { order: number; low: number; median: number; high: number }[]
+}
+
+export const rdtExpectedFailureTimes = (req: {
+  n: number; distribution: string; beta: number; eta: number; confidence: number
+}) => api.post<ExpectedFailureTimesResponse>('/alt/rdt/expected-failure-times', req).then(r => r.data)
+
+export interface DifferenceDetectionResponse {
+  metric: string; confidence: number
+  design1_beta: number; design2_beta: number
+  values: number[]; test_times: number[]
+  matrix: number[][]
+  details: Record<string, {
+    test_time: number
+    design1: { value: number; lower: number; upper: number }
+    design2: { value: number; lower: number; upper: number }
+  }>
+}
+
+export const rdtDifferenceDetection = (req: {
+  metric: string; confidence: number
+  design1_beta: number; design1_n: number
+  design2_beta: number; design2_n: number
+  metric_min: number; metric_max: number; metric_increment: number
+  test_times: number[]
+}) => api.post<DifferenceDetectionResponse>('/alt/rdt/difference-detection-matrix', req).then(r => r.data)
+
+export interface TestSimulationResponse {
+  metric: string; n_valid: number; num_simulations: number
+  mean: number; median: number; std: number; p5: number; p95: number
+  prob_meet_target: number | null; target_value: number | null
+  histogram: { counts: number[]; edges: number[] }
+}
+
+export const testSimulation = (req: {
+  distribution: string; beta: number; eta: number; n: number
+  test_duration?: number | null; num_simulations: number
+  metric: string; target_time: number; target_value?: number | null
+  seed?: number | null
+}) => api.post<TestSimulationResponse>('/alt/test-simulation', req).then(r => r.data)
+
 export interface StepStressResponse {
   exponent_p: number
   ref_stress: number

@@ -1,0 +1,417 @@
+import { useState } from 'react'
+import { Plus, Trash2 } from 'lucide-react'
+import Plot from '../shared/ExportablePlot'
+import {
+  computeSampleSize, SampleSizeResponse,
+  rdtExponentialChiSquared, ExpChiSquaredResponse,
+  rdtBayesian, BayesianRDTResponse,
+} from '../../api/client'
+import {
+  ToolLayout, ToolTabs, Card, Field, Select,
+  detail, fmtNum, inputCls, labelCls, PLOT_CFG, plotBase,
+  ToolDef,
+} from './toolkit'
+
+// ─── 1. Parametric Binomial ──────────────────────────────────────────────────
+
+function ParametricBinomial() {
+  const [solveFor, setSolveFor] = useState<'parametric_samples' | 'parametric_time'>('parametric_samples')
+  const [R, setR] = useState('90')
+  const [ci, setCi] = useState('95')
+  const [missionTime, setMissionTime] = useState('100')
+  const [beta, setBeta] = useState('1.5')
+  const [fails, setFails] = useState('0')
+  const [testTime, setTestTime] = useState('48')
+  const [n, setN] = useState('20')
+  const [optionsTable, setOptionsTable] = useState(false)
+  const [ocCurve, setOcCurve] = useState(false)
+  const [res, setRes] = useState<SampleSizeResponse | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  const run = async () => {
+    setErr(null); setLoading(true)
+    try {
+      const r = await computeSampleSize({
+        method: solveFor,
+        failures: parseInt(fails, 10),
+        R: parseFloat(R) / 100,
+        CI: parseFloat(ci) / 100,
+        mission_time: parseFloat(missionTime),
+        beta: parseFloat(beta),
+        test_time: solveFor === 'parametric_samples' ? parseFloat(testTime) : undefined,
+        n: solveFor === 'parametric_time' ? parseInt(n, 10) : undefined,
+        options_table: optionsTable,
+        oc_curve: ocCurve,
+      })
+      setRes(r)
+    } catch (e) { setErr(detail(e, 'Analysis failed')) } finally { setLoading(false) }
+  }
+
+  const solvingSamples = solveFor === 'parametric_samples'
+
+  const controls = (
+    <>
+      <Select label="Solve for" value={solveFor} onChange={v => setSolveFor(v as typeof solveFor)}
+        options={[
+          { value: 'parametric_samples', label: 'Sample size (given test time)' },
+          { value: 'parametric_time', label: 'Test time (given sample size)' },
+        ]} />
+      <Field label="Demonstrated reliability R (%)" tip="Reliability to demonstrate at the stated time." value={R} onChange={setR} />
+      <Field label="Confidence level (%)" tip="Confidence level of the demonstration." value={ci} onChange={setCi} />
+      <Field label="Demonstrated at time" tip="Mission time at which the reliability is demonstrated." value={missionTime} onChange={setMissionTime} />
+      <Field label="Weibull shape β" tip="Known/assumed Weibull shape parameter." value={beta} onChange={setBeta} />
+      <Field label="Allowable failures" tip="Number of failures permitted during the test." value={fails} onChange={setFails} />
+      {solvingSamples
+        ? <Field label="Test time per unit" tip="Duration each unit is tested." value={testTime} onChange={setTestTime} />
+        : <Field label="Sample size" tip="Number of units tested." value={n} onChange={setN} />}
+      <label className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
+        <input type="checkbox" checked={optionsTable} onChange={e => setOptionsTable(e.target.checked)} />
+        Show options table
+      </label>
+      <label className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
+        <input type="checkbox" checked={ocCurve} onChange={e => setOcCurve(e.target.checked)} />
+        Show OC curve
+      </label>
+    </>
+  )
+
+  const results = res && (
+    <div className="space-y-5">
+      <div className="grid grid-cols-3 gap-3">
+        {solvingSamples
+          ? <Card label="Required sample size" value={res.n != null ? String(res.n) : '—'} accent />
+          : <Card label="Required test time" value={fmtNum(res.test_time)} accent />}
+        <Card label="Weibull η" value={fmtNum(res.eta)} />
+        <Card label="R demonstrated at test time" value={res.R_test != null ? res.R_test.toFixed(4) : '—'} />
+      </div>
+      {res.options_table && res.options_table.length > 0 && (
+        <div>
+          <p className="text-xs font-semibold text-gray-600 mb-1">Options table</p>
+          <table className="w-full text-xs border border-gray-200 rounded">
+            <thead className="bg-gray-50"><tr>
+              <th className="px-3 py-1.5 text-left font-medium text-gray-600">Allowable failures (f)</th>
+              <th className="px-3 py-1.5 text-right font-medium text-gray-600">{solvingSamples ? 'Sample size (n)' : 'Test time'}</th>
+            </tr></thead>
+            <tbody>
+              {res.options_table.map((row, i) => (
+                <tr key={i} className="border-t border-gray-100">
+                  <td className="px-3 py-1 text-gray-700">{row.f}</td>
+                  <td className="px-3 py-1 text-right font-mono">
+                    {solvingSamples
+                      ? (row.n != null ? String(row.n) : '—')
+                      : (row.test_time != null ? fmtNum(row.test_time) : '—')}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {res.oc_curve && (
+        <div>
+          <p className="text-xs font-semibold text-gray-600 mb-1">Operating characteristic (OC) curve</p>
+          <Plot
+            data={[{ x: res.oc_curve.R, y: res.oc_curve.P_accept, mode: 'lines', line: { color: '#3b82f6', width: 2 }, name: 'P(accept)' }] as Plotly.Data[]}
+            layout={{ ...plotBase, height: 320, xaxis: { title: { text: 'True reliability R' } }, yaxis: { title: { text: 'P(accept)' }, range: [0, 1] } } as Plotly.Layout}
+            config={PLOT_CFG} style={{ width: '100%' }} useResizeHandler />
+        </div>
+      )}
+    </div>
+  )
+
+  return <ToolLayout
+    intro="Parametric binomial demonstration: demonstrate a reliability at a time assuming a Weibull life with a known shape. Solve for either the required sample size (given test time) or the required test time (given sample size)."
+    controls={controls} err={err} loading={loading} onRun={run} runLabel="Compute" results={results} />
+}
+
+// ─── 2. Non-Parametric Binomial ──────────────────────────────────────────────
+
+function NonParametricBinomial() {
+  const [R, setR] = useState('80')
+  const [ci, setCi] = useState('90')
+  const [fails, setFails] = useState('0')
+  const [ocCurve, setOcCurve] = useState(false)
+  const [res, setRes] = useState<SampleSizeResponse | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  const run = async () => {
+    setErr(null); setLoading(true)
+    try {
+      const r = await computeSampleSize({
+        method: 'nonparametric',
+        failures: parseInt(fails, 10),
+        R: parseFloat(R) / 100,
+        CI: parseFloat(ci) / 100,
+        oc_curve: ocCurve,
+      })
+      setRes(r)
+    } catch (e) { setErr(detail(e, 'Analysis failed')) } finally { setLoading(false) }
+  }
+
+  const controls = (
+    <>
+      <Field label="Demonstrated reliability R (%)" tip="Reliability to demonstrate (no distribution assumption)." value={R} onChange={setR} />
+      <Field label="Confidence level (%)" tip="Confidence level of the demonstration." value={ci} onChange={setCi} />
+      <Field label="Allowable failures" tip="Number of failures permitted during the test." value={fails} onChange={setFails} />
+      <label className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
+        <input type="checkbox" checked={ocCurve} onChange={e => setOcCurve(e.target.checked)} />
+        Show OC curve
+      </label>
+    </>
+  )
+
+  const results = res && (
+    <div className="space-y-5">
+      <div className="grid grid-cols-3 gap-3">
+        <Card label="Required sample size" value={res.n != null ? String(res.n) : '—'} accent />
+        <Card label="Demonstrated reliability" value={`${(res.R * 100).toFixed(1)}%`} />
+        <Card label="Confidence level" value={`${(res.CI * 100).toFixed(1)}%`} />
+      </div>
+      {res.oc_curve && (
+        <div>
+          <p className="text-xs font-semibold text-gray-600 mb-1">Operating characteristic (OC) curve</p>
+          <Plot
+            data={[{ x: res.oc_curve.R, y: res.oc_curve.P_accept, mode: 'lines', line: { color: '#3b82f6', width: 2 }, name: 'P(accept)' }] as Plotly.Data[]}
+            layout={{ ...plotBase, height: 320, xaxis: { title: { text: 'True reliability R' } }, yaxis: { title: { text: 'P(accept)' }, range: [0, 1] } } as Plotly.Layout}
+            config={PLOT_CFG} style={{ width: '100%' }} useResizeHandler />
+        </div>
+      )}
+    </div>
+  )
+
+  return <ToolLayout
+    intro="Non-parametric binomial demonstration: no distribution assumption, for one-shot / pass-fail devices. Computes the required sample size to demonstrate a reliability at a confidence level given the allowable failures."
+    controls={controls} err={err} loading={loading} onRun={run} runLabel="Compute" results={results} />
+}
+
+// ─── 3. Exponential Chi-Squared ──────────────────────────────────────────────
+
+function ExpChiSquared() {
+  const [metric, setMetric] = useState<'reliability' | 'mttf'>('reliability')
+  const [reliability, setReliability] = useState('85')
+  const [demoTime, setDemoTime] = useState('500')
+  const [mttf, setMttf] = useState('100')
+  const [confidence, setConfidence] = useState('90')
+  const [fails, setFails] = useState('2')
+  const [solveFor, setSolveFor] = useState<'test_time' | 'sample_size'>('test_time')
+  const [n, setN] = useState('1')
+  const [testTime, setTestTime] = useState('16374')
+  const [res, setRes] = useState<ExpChiSquaredResponse | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  const run = async () => {
+    setErr(null); setLoading(true)
+    try {
+      const r = await rdtExponentialChiSquared({
+        metric,
+        reliability: metric === 'reliability' ? parseFloat(reliability) / 100 : undefined,
+        demo_time: metric === 'reliability' ? parseFloat(demoTime) : undefined,
+        mttf: metric === 'mttf' ? parseFloat(mttf) : undefined,
+        confidence: parseFloat(confidence) / 100,
+        failures: parseInt(fails, 10),
+        solve_for: solveFor,
+        n: solveFor === 'test_time' ? parseInt(n, 10) : null,
+        test_time: solveFor === 'sample_size' ? parseFloat(testTime) : null,
+      })
+      setRes(r)
+    } catch (e) { setErr(detail(e, 'Analysis failed')) } finally { setLoading(false) }
+  }
+
+  const controls = (
+    <>
+      <Select label="Metric" value={metric} onChange={v => setMetric(v as typeof metric)}
+        options={[
+          { value: 'reliability', label: 'Reliability at a time' },
+          { value: 'mttf', label: 'MTTF' },
+        ]} />
+      {metric === 'reliability' ? <>
+        <Field label="Demonstrated reliability (%)" tip="Reliability to demonstrate at the stated time." value={reliability} onChange={setReliability} />
+        <Field label="Demonstrated at time" tip="Mission time at which the reliability is demonstrated." value={demoTime} onChange={setDemoTime} />
+      </> : (
+        <Field label="Demonstrated MTTF" tip="Mean time to failure to demonstrate." value={mttf} onChange={setMttf} />
+      )}
+      <Field label="Confidence level (%)" tip="Confidence level of the demonstration." value={confidence} onChange={setConfidence} />
+      <Field label="Allowable failures" tip="Number of failures permitted during the test." value={fails} onChange={setFails} />
+      <Select label="Solve for" value={solveFor} onChange={v => setSolveFor(v as typeof solveFor)}
+        options={[
+          { value: 'test_time', label: 'Test time per unit (given units)' },
+          { value: 'sample_size', label: 'Sample size (given test time)' },
+        ]} />
+      {solveFor === 'test_time'
+        ? <Field label="Sample size (units)" tip="Number of units under test." value={n} onChange={setN} />
+        : <Field label="Test time per unit" tip="Duration each unit is tested." value={testTime} onChange={setTestTime} />}
+    </>
+  )
+
+  const results = res && (
+    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <Card label="Accumulated test time" value={fmtNum(res.accumulated_test_time)} accent />
+      <Card label="Chi-squared" value={fmtNum(res.chi_squared)} />
+      <Card label="Implied MTTF" value={fmtNum(res.implied_mttf)} />
+      {res.sample_size != null
+        ? <Card label="Sample size" value={String(res.sample_size)} />
+        : res.test_time != null
+          ? <Card label="Test time per unit" value={fmtNum(res.test_time)} />
+          : <Card label="Allowable failures" value={String(res.failures)} />}
+    </div>
+  )
+
+  return <ToolLayout
+    intro="Exponential chi-squared demonstration: assumes a constant failure rate (exponential life). Computes the accumulated test time required to demonstrate a reliability-at-time or an MTTF at a confidence level with a given number of allowable failures."
+    controls={controls} err={err} loading={loading} onRun={run} runLabel="Compute" results={results} />
+}
+
+// ─── 4. Non-Parametric Bayesian ──────────────────────────────────────────────
+
+interface SubRow { name: string; n: string; r: string }
+const SAMPLE_SUBS: SubRow[] = [
+  { name: 'A', n: '20', r: '0' },
+  { name: 'B', n: '30', r: '1' },
+  { name: 'C', n: '100', r: '4' },
+]
+
+function Bayesian() {
+  const [solveFor, setSolveFor] = useState<'sample_size' | 'reliability' | 'confidence'>('sample_size')
+  const [reliability, setReliability] = useState('90')
+  const [confidence, setConfidence] = useState('80')
+  const [fails, setFails] = useState('1')
+  const [n, setN] = useState('20')
+  const [priorSource, setPriorSource] = useState<'expert' | 'subsystem'>('expert')
+  const [worst, setWorst] = useState('80')
+  const [likely, setLikely] = useState('85')
+  const [best, setBest] = useState('97')
+  const [subs, setSubs] = useState<SubRow[]>(SAMPLE_SUBS)
+  const [res, setRes] = useState<BayesianRDTResponse | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  const updateSub = (i: number, k: keyof SubRow, v: string) =>
+    setSubs(subs.map((r, j) => j === i ? { ...r, [k]: v } : r))
+  const addSub = () => setSubs([...subs, { name: '', n: '', r: '' }])
+  const delSub = (i: number) => setSubs(subs.filter((_, j) => j !== i))
+
+  const run = async () => {
+    setErr(null); setLoading(true)
+    try {
+      const r = await rdtBayesian({
+        solve_for: solveFor,
+        reliability: solveFor !== 'reliability' ? parseFloat(reliability) / 100 : undefined,
+        confidence: solveFor !== 'confidence' ? parseFloat(confidence) / 100 : undefined,
+        failures: parseInt(fails, 10),
+        n: solveFor !== 'sample_size' ? parseInt(n, 10) : null,
+        prior_source: priorSource,
+        worst: priorSource === 'expert' ? parseFloat(worst) / 100 : null,
+        likely: priorSource === 'expert' ? parseFloat(likely) / 100 : null,
+        best: priorSource === 'expert' ? parseFloat(best) / 100 : null,
+        subsystems: priorSource === 'subsystem'
+          ? subs.filter(s => s.n.trim() && s.r.trim()).map(s => ({
+              name: s.name.trim() || undefined, n: parseInt(s.n, 10), r: parseInt(s.r, 10),
+            }))
+          : null,
+      })
+      setRes(r)
+    } catch (e) { setErr(detail(e, 'Analysis failed')) } finally { setLoading(false) }
+  }
+
+  const controls = (
+    <>
+      <Select label="Solve for" value={solveFor} onChange={v => setSolveFor(v as typeof solveFor)}
+        options={[
+          { value: 'sample_size', label: 'Sample size' },
+          { value: 'reliability', label: 'Demonstrated reliability' },
+          { value: 'confidence', label: 'Confidence level' },
+        ]} />
+      {solveFor !== 'reliability' &&
+        <Field label="Required reliability (%)" tip="Target reliability to demonstrate." value={reliability} onChange={setReliability} />}
+      {solveFor !== 'confidence' &&
+        <Field label="Confidence level (%)" tip="Confidence level of the demonstration." value={confidence} onChange={setConfidence} />}
+      <Field label="Allowed failures" tip="Number of failures permitted in the test." value={fails} onChange={setFails} />
+      {solveFor !== 'sample_size' &&
+        <Field label="Sample size n" tip="Number of units tested." value={n} onChange={setN} />}
+      <Select label="Prior source" value={priorSource} onChange={v => setPriorSource(v as typeof priorSource)}
+        options={[
+          { value: 'expert', label: 'Expert opinion' },
+          { value: 'subsystem', label: 'Subsystem tests' },
+        ]} />
+      {priorSource === 'expert' ? <>
+        <Field label="Worst-case reliability (%)" tip="Pessimistic estimate of reliability." value={worst} onChange={setWorst} />
+        <Field label="Most-likely (%)" tip="Most-likely estimate of reliability." value={likely} onChange={setLikely} />
+        <Field label="Best-case (%)" tip="Optimistic estimate of reliability." value={best} onChange={setBest} />
+      </> : (
+        <div>
+          <label className={labelCls}>Subsystem test data</label>
+          <div className="border border-gray-200 rounded overflow-hidden">
+            <div className="max-h-52 overflow-y-auto">
+              <table className="w-full text-xs">
+                <thead className="bg-gray-50 sticky top-0">
+                  <tr>
+                    <th className="px-1 py-1 text-left font-medium text-gray-500">Name</th>
+                    <th className="px-1 py-1 text-left font-medium text-gray-500">n</th>
+                    <th className="px-1 py-1 text-left font-medium text-gray-500">r</th>
+                    <th className="w-6"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {subs.map((s, i) => (
+                    <tr key={i} className="border-t border-gray-100 group">
+                      <td className="px-0.5 py-0.5"><input value={s.name} onChange={e => updateSub(i, 'name', e.target.value)} className="w-full text-xs px-1 py-0.5 border-0 bg-transparent focus:ring-1 focus:ring-blue-400 rounded font-mono" placeholder="ID" /></td>
+                      <td className="px-0.5 py-0.5"><input value={s.n} onChange={e => updateSub(i, 'n', e.target.value)} className="w-full text-xs px-1 py-0.5 border-0 bg-transparent focus:ring-1 focus:ring-blue-400 rounded font-mono" placeholder="0" /></td>
+                      <td className="px-0.5 py-0.5"><input value={s.r} onChange={e => updateSub(i, 'r', e.target.value)} className="w-full text-xs px-1 py-0.5 border-0 bg-transparent focus:ring-1 focus:ring-blue-400 rounded font-mono" placeholder="0" /></td>
+                      <td className="px-0.5 text-center"><button tabIndex={-1} onClick={() => delSub(i)} className="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100"><Trash2 size={11} /></button></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <button onClick={addSub} className="w-full text-xs text-blue-600 hover:bg-blue-50 py-1 flex items-center justify-center gap-1 border-t border-gray-100"><Plus size={11} /> Add row</button>
+          </div>
+        </div>
+      )}
+    </>
+  )
+
+  const results = res && (
+    <div className="space-y-5">
+      <div className="grid grid-cols-3 gap-3">
+        {res.solve_for === 'sample_size'
+          ? <Card label="Required sample size" value={res.sample_size != null ? String(res.sample_size) : '—'} accent />
+          : res.solve_for === 'reliability'
+            ? <Card label="Demonstrated reliability" value={res.reliability != null ? res.reliability.toFixed(4) : '—'} accent />
+            : <Card label="Confidence level" value={res.confidence != null ? `${(res.confidence * 100).toFixed(2)}%` : '—'} accent />}
+        <Card label="Allowed failures" value={String(res.failures)} />
+        {res.n != null && <Card label="Sample size n" value={String(res.n)} />}
+      </div>
+      <div>
+        <p className="text-xs font-semibold text-gray-600 mb-1">Prior parameters ({res.prior_source})</p>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <Card label="E(R₀)" value={res.E_R0.toFixed(4)} />
+          <Card label="α₀" value={fmtNum(res.alpha0)} />
+          <Card label="β₀" value={fmtNum(res.beta0)} />
+          {res.posterior_alpha != null && res.posterior_beta != null && (
+            <Card label="Posterior α / β" value={`${fmtNum(res.posterior_alpha)} / ${fmtNum(res.posterior_beta)}`} />
+          )}
+        </div>
+      </div>
+    </div>
+  )
+
+  return <ToolLayout
+    intro="Non-parametric Bayesian demonstration: a Beta prior on reliability is built from expert opinion (worst / most-likely / best) or from subsystem test data, then combined with the demonstration test to solve for sample size, demonstrated reliability, or confidence."
+    controls={controls} err={err} loading={loading} onRun={run} runLabel="Compute" results={results} />
+}
+
+// ─── Container ───────────────────────────────────────────────────────────────
+
+const TOOLS: ToolDef[] = [
+  { id: 'parametric', label: 'Parametric Binomial', render: () => <ParametricBinomial /> },
+  { id: 'nonparametric', label: 'Non-Parametric Binomial', render: () => <NonParametricBinomial /> },
+  { id: 'chisquared', label: 'Exponential Chi-Squared', render: () => <ExpChiSquared /> },
+  { id: 'bayesian', label: 'Non-Parametric Bayesian', render: () => <Bayesian /> },
+]
+
+export default function RDTTools() {
+  return <ToolTabs tools={TOOLS} />
+}

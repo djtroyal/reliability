@@ -12,17 +12,12 @@ export interface SharedDataset {
 
 export const DEFAULT_COLS = ['x1', 'x2', 'y']
 
-export const sampleRows = (): GridRow[] => {
-  const data = [
-    [1, 2, 5], [2, 3, 8], [3, 1, 7], [4, 4, 11], [5, 2, 12],
-    [6, 5, 14], [7, 3, 16], [8, 6, 19], [9, 1, 18], [10, 4, 22],
-  ]
-  return data.map(([a, b, c]) => ({ x1: String(a), x2: String(b), y: String(c) }))
-}
+const blankRows = (n = 8): GridRow[] =>
+  Array.from({ length: n }, () => ({ x1: '', x2: '', y: '' }))
 
 export const INITIAL_DATASET: SharedDataset = {
   columns: DEFAULT_COLS,
-  rows: sampleRows(),
+  rows: blankRows(),
 }
 
 /** Store-backed shared dataset hook used by both Data Analysis sub-tabs. */

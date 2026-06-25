@@ -267,11 +267,8 @@ function ExpChiSquared() {
 // ─── 4. Non-Parametric Bayesian ──────────────────────────────────────────────
 
 interface SubRow { name: string; n: string; r: string }
-const SAMPLE_SUBS: SubRow[] = [
-  { name: 'A', n: '20', r: '0' },
-  { name: 'B', n: '30', r: '1' },
-  { name: 'C', n: '100', r: '4' },
-]
+const emptySubRows = (): SubRow[] =>
+  Array.from({ length: 3 }, () => ({ name: '', n: '', r: '' }))
 
 function Bayesian() {
   const [solveFor, setSolveFor] = useState<'sample_size' | 'reliability' | 'confidence'>('sample_size')
@@ -283,7 +280,7 @@ function Bayesian() {
   const [worst, setWorst] = useState('80')
   const [likely, setLikely] = useState('85')
   const [best, setBest] = useState('97')
-  const [subs, setSubs] = useState<SubRow[]>(SAMPLE_SUBS)
+  const [subs, setSubs] = useState<SubRow[]>(emptySubRows)
   const [res, setRes] = useState<BayesianRDTResponse | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)

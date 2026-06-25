@@ -21,7 +21,7 @@ interface MSAState {
 }
 
 const INITIAL_STATE: MSAState = {
-  rawText: 'Part\tOperator\tMeasurement\n1\tA\t0.29\n1\tA\t0.41\n2\tA\t-0.56\n2\tA\t-0.68\n3\tA\t1.34\n3\tA\t1.17\n1\tB\t0.08\n1\tB\t0.25\n2\tB\t-0.47\n2\tB\t-1.22\n3\tB\t1.19\n3\tB\t0.94\n1\tC\t0.04\n1\tC\t0.34\n2\tC\t-1.38\n2\tC\t-1.13\n3\tC\t0.88\n3\tC\t1.09',
+  rawText: '',
   tolerance: '',
   multiplier: '6',
   method: 'anova',

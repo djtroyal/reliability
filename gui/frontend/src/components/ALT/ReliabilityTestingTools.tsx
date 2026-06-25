@@ -427,19 +427,8 @@ function GoF() {
 // ─── Degradation (wear-to-failure) ───────────────────────────────────────────
 
 interface DegRow { unit: string; time: string; meas: string }
-const SAMPLE_DEG: DegRow[] = [
-  // ReliaSoft crack-propagation example (cycles ×1000, crack mm, fail at 30mm).
-  { unit: 'A', time: '100', meas: '15' }, { unit: 'A', time: '200', meas: '20' },
-  { unit: 'A', time: '300', meas: '22' }, { unit: 'A', time: '400', meas: '26' }, { unit: 'A', time: '500', meas: '29' },
-  { unit: 'B', time: '100', meas: '10' }, { unit: 'B', time: '200', meas: '15' },
-  { unit: 'B', time: '300', meas: '20' }, { unit: 'B', time: '400', meas: '25' }, { unit: 'B', time: '500', meas: '30' },
-  { unit: 'C', time: '100', meas: '17' }, { unit: 'C', time: '200', meas: '25' },
-  { unit: 'C', time: '300', meas: '26' }, { unit: 'C', time: '400', meas: '27' }, { unit: 'C', time: '500', meas: '33' },
-  { unit: 'D', time: '100', meas: '12' }, { unit: 'D', time: '200', meas: '16' },
-  { unit: 'D', time: '300', meas: '17' }, { unit: 'D', time: '400', meas: '20' }, { unit: 'D', time: '500', meas: '26' },
-  { unit: 'E', time: '100', meas: '10' }, { unit: 'E', time: '200', meas: '15' },
-  { unit: 'E', time: '300', meas: '20' }, { unit: 'E', time: '400', meas: '26' }, { unit: 'E', time: '500', meas: '33' },
-]
+const emptyDegRows = (): DegRow[] =>
+  Array.from({ length: 5 }, () => ({ unit: '', time: '', meas: '' }))
 
 const DEG_MODELS = [
   { v: 'linear', l: 'Linear  (y = a·x + b)' },
@@ -469,7 +458,7 @@ function Degradation() {
 }
 
 function NonDestructiveDeg() {
-  const [rows, setRows] = useState<DegRow[]>(SAMPLE_DEG)
+  const [rows, setRows] = useState<DegRow[]>(emptyDegRows)
   const [threshold, setThreshold] = useState('30')
   const [direction, setDirection] = useState<'above' | 'below'>('above')
   const [model, setModel] = useState('exponential')
@@ -721,19 +710,11 @@ function NonDestructiveDeg() {
 // ─── Destructive degradation ─────────────────────────────────────────────────
 
 interface DestRow { time: string; meas: string }
-const SAMPLE_DEST: DestRow[] = (() => {
-  const y1 = [437, 446, 497, 503, 705, 737, 748, 788, 818, 860, 875, 934, 1124, 1250, 1350]
-  const y2 = [412, 420, 451, 454, 554, 580, 608, 610, 727, 825, 925]
-  const y3 = [246, 324, 330, 426, 499, 546, 554, 559, 625]
-  const y4 = [125, 208, 229, 242, 273, 297, 311, 318, 393, 403, 470]
-  const out: DestRow[] = []
-  ;[[1, y1], [2, y2], [3, y3], [4, y4]].forEach(([yr, vals]) =>
-    (vals as number[]).forEach(v => out.push({ time: String(yr), meas: String(v) })))
-  return out
-})()
+const emptyDestRows = (): DestRow[] =>
+  Array.from({ length: 5 }, () => ({ time: '', meas: '' }))
 
 function DestructiveDeg() {
-  const [rows, setRows] = useState<DestRow[]>(SAMPLE_DEST)
+  const [rows, setRows] = useState<DestRow[]>(emptyDestRows)
   const [threshold, setThreshold] = useState('150')
   const [direction, setDirection] = useState<'above' | 'below'>('below')
   const [model, setModel] = useState('linear')

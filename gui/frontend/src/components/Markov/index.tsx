@@ -34,19 +34,13 @@ interface MarkovModuleState {
 }
 
 const INITIAL_MARKOV: MarkovModuleState = {
-  states: [
-    { id: 'op', name: 'Operating', state_type: 'operational', description: '' },
-    { id: 'failed', name: 'Failed', state_type: 'failed', description: '' },
-  ],
-  transitions: [
-    { from_state: 'op', to_state: 'failed', rate: 0.001, label: 'λ' },
-    { from_state: 'failed', to_state: 'op', rate: 0.1, label: 'μ' },
-  ],
+  states: [],
+  transitions: [],
   tMax: 10000,
   nPoints: 100,
   initialState: '',
   result: null,
-  nextStateId: 3,
+  nextStateId: 1,
 }
 
 export default function Markov() {

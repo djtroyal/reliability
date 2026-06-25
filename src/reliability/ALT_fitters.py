@@ -233,6 +233,12 @@ class _ALT_Fitter_Base:
         self.life_stress_params = self.params[:n_life_params]
         self.shape = self.params[n_life_params] if has_shape else None
 
+        # Retain the fitted life-stress relationship so life at an arbitrary
+        # stress can be evaluated later (e.g. for life-stress plots).
+        self.life_stress_func = life_stress_func
+        self.base_dist_name = base_dist_name
+        self.is_dual = is_dual
+
         if use_level_stress is not None:
             if is_dual:
                 use_scale = life_stress_func(
@@ -248,6 +254,27 @@ class _ALT_Fitter_Base:
             self.distribution_at_use_stress = dist_info['make'](use_scale, self.shape)
         else:
             self.distribution_at_use_stress = None
+
+    def life_at_stress(self, stress):
+        """Median life of the fitted distribution at the given stress level(s).
+
+        ``stress`` is a scalar for single-stress models, or a 2-tuple/sequence
+        ``(s1, s2)`` for dual-stress models. The distribution scale is evaluated
+        through the fitted life-stress relationship and converted to a real
+        median life (handling, e.g., Lognormal's log-space ``mu``).
+        """
+        if self.is_dual:
+            scale = self.life_stress_func(
+                np.array([stress[0]], dtype=float),
+                np.array([stress[1]], dtype=float),
+                *self.life_stress_params,
+            )[0]
+        else:
+            scale = self.life_stress_func(
+                np.array([stress], dtype=float),
+                *self.life_stress_params,
+            )[0]
+        return float(_DIST_INFO[self.base_dist_name]['make'](scale, self.shape).median)
 
 
 def _compute_initial_guess_single(stress_model_name, mean_life, mean_stress,

@@ -225,38 +225,47 @@ def fit_alt(req: ALTFitRequest):
         try:
             model = fe.best_model
             unique_stresses = np.unique(stresses)
-            s_range = np.linspace(unique_stresses.min() * 0.8,
-                                  unique_stresses.max() * 1.2, 100)
-            life_at_stress = []
+            lo = float(unique_stresses.min()) * 0.8
+            hi = float(unique_stresses.max()) * 1.2
+            # Extend the range toward the use-level stress (typically below the
+            # tested range) so the extrapolation to it is visible on the plot.
+            if req.use_level_stress is not None:
+                lo = min(lo, float(req.use_level_stress) * 0.95)
+                hi = max(hi, float(req.use_level_stress) * 1.05)
+            s_range = np.linspace(lo, hi, 100)
+
+            line_life = []
             for s in s_range:
                 try:
-                    # life = characteristic life at stress s
-                    params = model.life_stress_params
-                    dist_info_life = model._life_at_stress(s)
-                    life_at_stress.append(float(dist_info_life))
+                    line_life.append(float(model.life_at_stress(float(s))))
                 except Exception:
-                    life_at_stress.append(None)
+                    line_life.append(None)
 
             # Observed median lives per stress level
             obs_stress = []
             obs_life = []
             for s in unique_stresses:
                 mask = stresses == s
-                median_life = float(np.median(failures[mask]))
                 obs_stress.append(float(s))
-                obs_life.append(median_life)
+                obs_life.append(float(np.median(failures[mask])))
+
+            use_level_life = None
+            if req.use_level_stress is not None:
+                try:
+                    use_level_life = float(model.life_at_stress(float(req.use_level_stress)))
+                except Exception:
+                    use_level_life = None
 
             life_stress_plot = {
                 "line_stress": s_range.tolist(),
-                "line_life": life_at_stress,
+                "line_life": line_life,
                 "scatter_stress": obs_stress,
                 "scatter_life": obs_life,
                 "use_level_stress": req.use_level_stress,
-                "use_level_life": (float(model._life_at_stress(req.use_level_stress))
-                                   if req.use_level_stress else None),
+                "use_level_life": use_level_life,
             }
         except Exception:
-            pass
+            life_stress_plot = None
 
     return {
         "results": results,

@@ -2,7 +2,7 @@ import { useState, useRef } from 'react'
 import Plot from '../shared/ExportablePlot'
 import { Play, Plus, Minus } from 'lucide-react'
 import {
-  convertWarrantyData, forecastWarrantyReturns,
+  forecastWarrantyReturns,
   WarrantyConvertResponse, WarrantyForecastResponse,
 } from '../../api/client'
 import { useFolioState, useUnits } from '../../store/project'
@@ -134,25 +134,6 @@ export default function Warranty() {
     return { quantities, returns }
   }
 
-  // --- Convert ---
-
-  const runConvert = async () => {
-    setError(null)
-    setLoading(true)
-    try {
-      const payload = buildPayload()
-      const res = await convertWarrantyData(payload)
-      patch({ convertResult: res })
-    } catch (e: unknown) {
-      setError(
-        (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-        || 'Error converting warranty data.',
-      )
-    } finally {
-      setLoading(false)
-    }
-  }
-
   // --- Forecast ---
 
   const runForecast = async () => {
@@ -258,12 +239,7 @@ export default function Warranty() {
 
       {error && <p className="text-xs text-red-600 bg-red-50 p-2 rounded">{error}</p>}
 
-      {/* Action buttons */}
-      <button onClick={runConvert} disabled={loading}
-        className="flex items-center justify-center gap-2 border border-blue-600 text-blue-600 hover:bg-blue-50 disabled:opacity-50 text-xs font-medium py-2 rounded transition-colors">
-        <Play size={12} /> {loading ? 'Working...' : 'Convert Only'}
-      </button>
-
+      {/* Action button */}
       <button onClick={runForecast} disabled={loading}
         className="flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-medium py-2 rounded transition-colors">
         <Play size={12} /> {loading ? 'Working...' : 'Analyze'}

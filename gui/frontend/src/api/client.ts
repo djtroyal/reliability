@@ -1230,11 +1230,6 @@ export const computeMCF = (req: { data: number[][]; CI?: number; parametric?: bo
 
 // --- Warranty Analysis ---
 
-export interface WarrantyConvertRequest {
-  quantities: number[]
-  returns: (number | null)[][]
-}
-
 export interface WarrantyConvertResponse {
   failures: number[]
   right_censored: number[]
@@ -1260,9 +1255,6 @@ export interface WarrantyForecastResponse {
   failures: number[]
   right_censored: number[]
 }
-
-export const convertWarrantyData = (req: WarrantyConvertRequest) =>
-  api.post<WarrantyConvertResponse>('/warranty/convert', req).then(r => r.data)
 
 export const forecastWarrantyReturns = (req: WarrantyForecastRequest) =>
   api.post<WarrantyForecastResponse>('/warranty/forecast', req).then(r => r.data)

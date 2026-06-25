@@ -414,10 +414,14 @@ export default function ALT() {
   const lifePlotData = (() => {
     if (!result?.life_stress_plot) return []
     const p = result.life_stress_plot
+    // Keep x/y aligned: drop only the (stress, life) pairs whose life is null.
+    const linePairs = p.line_stress
+      .map((s, i) => [s, p.line_life[i]] as const)
+      .filter(([, l]) => l != null)
     const traces: Plotly.Data[] = [
       {
-        x: p.line_stress as Plotly.Datum[],
-        y: p.line_life.filter(Boolean) as Plotly.Datum[],
+        x: linePairs.map(([s]) => s) as Plotly.Datum[],
+        y: linePairs.map(([, l]) => l) as Plotly.Datum[],
         mode: 'lines', name: 'Life-Stress model',
         line: { color: '#3b82f6', width: 2 },
       } as Plotly.Data,
@@ -704,7 +708,7 @@ export default function ALT() {
                     />
                   ) : (
                     <div className="flex items-center justify-center h-full text-gray-400 text-sm">
-                      No life-stress plot available (set a use-level stress for full plot)
+                      No life-stress plot available.
                     </div>
                   )}
                 </div>

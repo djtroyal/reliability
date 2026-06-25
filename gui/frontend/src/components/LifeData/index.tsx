@@ -339,6 +339,7 @@ export default function LifeData() {
   // once `folio` is resolved) so the selection survives folio switches/refresh.
   // Quad view: show PDF + CDF + SF + HF in a 2x2 grid (#11)
   const [quadView, setQuadView] = useState(false)
+  const [activeGroupTab, setActiveGroupTab] = useState<string | null>(null)
   // Which comparison plot is shown in the Compare view
   const [compareView, setCompareView] = useState<'Contours' | 'P-P' | 'Q-Q' | 'PDF' | 'CDF' | 'SF' | 'HF'>('Contours')
   // Quick Reliability Calculator state
@@ -632,19 +633,10 @@ export default function LifeData() {
           })
           groupResults[gid] = res
         }
-        // Also run the combined fit so the results table and selection still work
-        const res = await fitDistributions({
-          failures,
-          right_censored: rc.length ? rc : undefined,
-          distributions_to_fit: folio.selectedDists.length < ALL_DISTS.length
-            ? folio.selectedDists : undefined,
-          method: folio.method,
-          CI: folio.ci,
-        })
-        // Default each group's chosen distribution to its own best fit.
         const groupSelectedDists: Record<string, string> = {}
         for (const gid of groupIds) groupSelectedDists[gid] = groupResults[gid].best_distribution
-        patchActive({ result: res, selectedDist: res.best_distribution, specResult: null, specialResult: null, groupResults, groupSelectedDists, groupSetDists: {}, dataSig: currentSig })
+        patchActive({ result: null, selectedDist: null, setDist: null, specResult: null, specialResult: null, groupResults, groupSelectedDists, groupSetDists: {}, dataSig: currentSig })
+        setActiveGroupTab(groupIds[0])
         setActiveViews(['Probability'])
       } else if (folio.analysisMode === 'parametric') {
         const res = await fitDistributions({
@@ -1050,6 +1042,22 @@ export default function LifeData() {
   /** Extract a folio's fitted distribution and numeric parameters
    *  (its confirmed setDist, or the best fit). Null if not fitted. */
   const folioFittedDist = (f: Folio): { dist: string; params: Record<string, number> } | null => {
+    if (f.fitByGroup && f.groupResults) {
+      const gids = Object.keys(f.groupResults)
+      if (gids.length === 0) return null
+      const gid = gids[0]
+      const gRes = f.groupResults[gid]
+      const gDist = f.groupSetDists?.[gid] ?? f.groupSelectedDists?.[gid] ?? gRes.best_distribution
+      const row = gRes.results.find(r => r.Distribution === gDist)
+      if (!row?.params) return null
+      const params: Record<string, number> = {}
+      for (const p of DIST_PARAM_FIELDS[gDist] ?? []) {
+        const v = row.params[p]
+        if (typeof v === 'number') params[p] = v
+      }
+      if (Object.keys(params).length === 0) return null
+      return { dist: gDist, params }
+    }
     const res = f.result
     if (!res) return null
     const dist = f.setDist || res.best_distribution
@@ -1154,23 +1162,30 @@ export default function LifeData() {
   const specialResult = folio.specialResult
   const isMixtureMode = folio.analysisMode === 'special'
     && specialResult?.model === 'mixture' && !!specialResult.curves?.x
-  const ciPct = Math.round(((isWeibayesMode ? weibayesResult?.CI : fitResult?.CI) ?? folio.ci) * 100)
-  const parametricDist = folio.selectedDist ?? fitResult?.best_distribution ?? ''
-  const activeDist = isWeibayesMode
-    ? (weibayesResult ? `Weibayes (β=${fmt(weibayesResult.beta)})` : 'Weibayes')
-    : isMixtureMode
-      ? `Weibull Mixture (${specialResult!.sub_curves?.length ?? 2} sub-pop)`
-      : parametricDist
-  const activePlot = fitResult?.plots?.[parametricDist]
-  // The chosen distribution for one ID group: explicit selection → set → that
-  // group's own best fit → the combined-fit distribution as a last resort.
+  const isFitByGroup = !!folio.fitByGroup && !!folio.groupResults && Object.keys(folio.groupResults).length > 0
+  const groupIds_all = isFitByGroup ? Object.keys(folio.groupResults!) : []
+  const effectiveGroupTab = isFitByGroup ? (activeGroupTab && groupIds_all.includes(activeGroupTab) ? activeGroupTab : groupIds_all[0]) : null
   const groupDist = (gid: string): string =>
     folio.groupSelectedDists?.[gid]
       ?? folio.groupSetDists?.[gid]
       ?? folio.groupResults?.[gid]?.best_distribution
-      ?? parametricDist
-  // Probability-plot source: parametric fit, Weibayes, or Weibull Mixture
-  // (all share the same {scatter,line,labels} shape).
+      ?? ''
+  const activeGroupResult = effectiveGroupTab ? folio.groupResults![effectiveGroupTab] : null
+  const activeGroupDist = effectiveGroupTab ? groupDist(effectiveGroupTab) : ''
+  const ciPct = Math.round(((isWeibayesMode ? weibayesResult?.CI : (isFitByGroup ? activeGroupResult?.CI : fitResult?.CI)) ?? folio.ci) * 100)
+  const parametricDist = isFitByGroup ? activeGroupDist : (folio.selectedDist ?? fitResult?.best_distribution ?? '')
+  const activeDist = isWeibayesMode
+    ? (weibayesResult ? `Weibayes (β=${fmt(weibayesResult.beta)})` : 'Weibayes')
+    : isMixtureMode
+      ? `Weibull Mixture (${specialResult!.sub_curves?.length ?? 2} sub-pop)`
+      : folio.analysisMode === 'special'
+        ? (specialResult ? (SPECIAL_MODELS.find(m => m.value === specialResult.model)?.label ?? specialResult.model) : '')
+        : isFitByGroup
+          ? (effectiveGroupTab ? `${effectiveGroupTab}: ${activeGroupDist}` : '')
+          : parametricDist
+  const activePlot = isFitByGroup
+    ? (activeGroupResult?.plots?.[activeGroupDist] ?? null)
+    : (fitResult?.plots?.[parametricDist] ?? null)
   const probSource = isWeibayesMode
     ? (weibayesResult?.probability ?? null)
     : isMixtureMode
@@ -1187,9 +1202,12 @@ export default function LifeData() {
       traces.push({ x: p.line_x, y: p.line_lower, mode: 'lines', name: `${ciPct}% CI`,
         fill: 'tonexty', fillcolor: 'rgba(239,68,68,0.15)', line: { width: 0 }, hoverinfo: 'skip' })
     }
-    traces.push({ x: p.scatter_x, y: p.scatter_y, mode: 'markers', name: 'Data',
+    const primLabel = isFitByGroup && effectiveGroupTab ? effectiveGroupTab : ''
+    traces.push({ x: p.scatter_x, y: p.scatter_y, mode: 'markers',
+      name: primLabel ? `${primLabel} data` : 'Data',
       marker: { color: '#3b82f6', size: 6 } })
-    traces.push({ x: p.line_x, y: p.line_y, mode: 'lines', name: 'Fitted',
+    traces.push({ x: p.line_x, y: p.line_y, mode: 'lines',
+      name: primLabel ? `${primLabel}: ${activeGroupDist}` : 'Fitted',
       line: { color: '#ef4444', width: 2 } })
     // Overlay right-censored (suspension) times as icons along the x-axis.
     if (showSuspensions) {
@@ -1232,11 +1250,10 @@ export default function LifeData() {
         }
       }
     }
-    // Per-ID-group overlays: scatter + fitted line for each group (each group
-    // uses its own chosen / best distribution).
     if (folio.groupResults && !isWeibayesMode) {
-      const groupIds = Object.keys(folio.groupResults)
-      groupIds.forEach((gid, gi) => {
+      const allGroupIds = Object.keys(folio.groupResults)
+      allGroupIds.forEach((gid, gi) => {
+        if (isFitByGroup && gid === effectiveGroupTab) return
         const gRes = folio.groupResults![gid]
         const gDist = groupDist(gid)
         const gPlot = gRes.plots?.[gDist]?.probability
@@ -1248,14 +1265,8 @@ export default function LifeData() {
           name: `${gid}: ${gDist}`, line: { color, width: 2, dash: 'dash' }, legendgroup: gid })
       })
     }
-    // Weibull Mixture: overlay each sub-population's fitted line (dotted).
-    if (isMixtureMode && p.sub_lines) {
-      p.sub_lines.forEach((s, i) => {
-        traces.push({ x: p.line_x, y: s.line_y, mode: 'lines',
-          name: `Sub ${i + 1} (ρ=${(s.proportion * 100).toFixed(1)}%)`,
-          line: { color: SUB_COLORS[i % SUB_COLORS.length], width: 1.5, dash: 'dot' } })
-      })
-    }
+    // (Sub-population lines removed per user request — only the combined
+    // mixture curve is shown on the probability plot.)
     return traces
   })()
 
@@ -1273,8 +1284,10 @@ export default function LifeData() {
         ],
       }
     }
-    if (!fitResult) return null
-    const row = fitResult.results.find(r => r.Distribution === parametricDist)
+    const effResult = isFitByGroup ? activeGroupResult : fitResult
+    if (!effResult) return null
+    const effDist = isFitByGroup ? activeGroupDist : parametricDist
+    const row = effResult.results.find(r => r.Distribution === effDist)
     if (!row?.params) return null
     const p = row.params
     const prows = _PARAM_NAMES.filter(n => p[n] != null).map(n => ({
@@ -1323,7 +1336,7 @@ export default function LifeData() {
     ? (weibayesResult?.curves ?? undefined)
     : isMixtureMode
       ? (specialResult!.curves as unknown as CurveData)
-      : (folio.specResult?.curves ?? activePlot?.curves)
+      : (folio.specResult?.curves ?? activePlot?.curves ?? undefined)
 
   // η override for salient points: prefer the fitted Weibull eta when available.
   const activeEta = (() => {
@@ -1362,9 +1375,10 @@ export default function LifeData() {
         })
       }
     }
+    const curveName = isFitByGroup && effectiveGroupTab ? `${effectiveGroupTab} — ${label}` : label
     traces.push({
       x: src.x, y: dyn[key], mode: 'lines',
-      line: { color: '#3b82f6', width: 2 }, name: label,
+      line: { color: '#3b82f6', width: 2 }, name: curveName,
     })
     if (showSalient && salientPoints.length > 0) {
       const t = salientTrace(salientPoints, src, key)
@@ -1384,10 +1398,10 @@ export default function LifeData() {
         })
       }
     }
-    // Per-ID-group overlays (each group uses its own chosen / best distribution)
     if (folio.groupResults && !isWeibayesMode) {
-      const groupIds = Object.keys(folio.groupResults)
-      groupIds.forEach((gid, gi) => {
+      const allGroupIds = Object.keys(folio.groupResults)
+      allGroupIds.forEach((gid, gi) => {
+        if (isFitByGroup && gid === effectiveGroupTab) return
         const gRes = folio.groupResults![gid]
         const gCurves = gRes.plots?.[groupDist(gid)]?.curves
         if (!gCurves) return
@@ -1402,20 +1416,7 @@ export default function LifeData() {
         })
       })
     }
-    // Weibull Mixture: overlay each sub-population curve (dotted). HF has no
-    // per-component curve, so only PDF/CDF/SF are overlaid.
-    if (isMixtureMode && specialResult?.sub_curves && (key === 'pdf' || key === 'cdf' || key === 'sf')) {
-      specialResult.sub_curves.forEach((sc, i) => {
-        const subDyn = sc as unknown as Record<string, number[] | undefined>
-        const subY = subDyn[key]
-        if (!subY) return
-        traces.push({
-          x: src.x, y: subY, mode: 'lines',
-          line: { color: SUB_COLORS[i % SUB_COLORS.length], width: 1.5, dash: 'dot' },
-          name: `Sub ${i + 1} (ρ=${(sc.proportion * 100).toFixed(1)}%)`,
-        })
-      })
-    }
+    // (Sub-population curve overlays removed per user request.)
     return traces
   }
 
@@ -1574,7 +1575,7 @@ export default function LifeData() {
                     margin: { t: statsSubtitle ? 60 : 30, r: 20, b: 50, l: 60 },
                     paper_bgcolor: 'white', plot_bgcolor: 'white',
                     title: { text: `${plotTitle(v.toLowerCase(), v)}${statsSubtitle ? `<br><sub>${statsSubtitle}</sub>` : ''}`, font: { size: 13 } },
-                    showlegend: !!folio.groupResults || isMixtureMode, legend: { x: 0.02, y: 0.98, font: { size: 10 } },
+                    showlegend: !!folio.groupResults, legend: { x: 0.02, y: 0.98, font: { size: 10 } },
                     datarevision: `${showStats}-${showSalient}-${showSuspensions}`,
                   } as any}
                   config={{ responsive: true }}
@@ -1601,13 +1602,6 @@ export default function LifeData() {
       { x: c.x, y: c.sf, mode: 'lines', name: 'SF (mixture)',
         line: { color: '#3b82f6', width: 2.5 } },
     ]
-    if (specialResult.sub_curves) {
-      specialResult.sub_curves.forEach((sc, i) => {
-        traces.push({ x: c.x, y: sc.sf, mode: 'lines',
-          name: `Sub ${i + 1} (ρ=${(sc.proportion * 100).toFixed(1)}%)`,
-          line: { color: SUB_COLORS[i % SUB_COLORS.length], width: 1.5, dash: 'dot' } })
-      })
-    }
     return traces
   })()
   const specialCdfData = (() => {
@@ -1617,13 +1611,6 @@ export default function LifeData() {
       { x: c.x, y: c.cdf, mode: 'lines', name: 'CDF (mixture)',
         line: { color: '#ef4444', width: 2.5 } },
     ]
-    if (specialResult.sub_curves) {
-      specialResult.sub_curves.forEach((sc, i) => {
-        traces.push({ x: c.x, y: sc.cdf, mode: 'lines',
-          name: `Sub ${i + 1} (ρ=${(sc.proportion * 100).toFixed(1)}%)`,
-          line: { color: SUB_COLORS[i % SUB_COLORS.length], width: 1.5, dash: 'dot' } })
-      })
-    }
     return traces
   })()
   const specialPdfData = (() => {
@@ -1633,13 +1620,6 @@ export default function LifeData() {
       { x: c.x, y: c.pdf, mode: 'lines', name: 'PDF (mixture)',
         line: { color: '#10b981', width: 2.5 } },
     ]
-    if (specialResult.sub_curves) {
-      specialResult.sub_curves.forEach((sc, i) => {
-        traces.push({ x: c.x, y: sc.pdf, mode: 'lines',
-          name: `Sub ${i + 1} (ρ=${(sc.proportion * 100).toFixed(1)}%)`,
-          line: { color: SUB_COLORS[i % SUB_COLORS.length], width: 1.5, dash: 'dot' } })
-      })
-    }
     return traces
   })()
   const specialHfData = (() => {
@@ -1689,7 +1669,7 @@ export default function LifeData() {
   // tabs (Parametric / Non-Param / Special / Weibayes / CFM) shows the existing
   // results without re-running. Only the active mode's results are displayed.
   const currentModeHasResult =
-    (folio.analysisMode === 'parametric' && (!!fitResult || !!folio.specResult || (!!folio.grouped && !!specialResult))) ||
+    (folio.analysisMode === 'parametric' && (!!fitResult || !!folio.specResult || (!!folio.grouped && !!specialResult) || (!!folio.fitByGroup && !!folio.groupResults))) ||
     (folio.analysisMode === 'nonparametric' && !!npResult) ||
     (folio.analysisMode === 'special' && !!specialResult) ||
     (folio.analysisMode === 'weibayes' && !!weibayesResult) ||
@@ -1864,7 +1844,10 @@ export default function LifeData() {
               <div className="flex flex-col gap-1">
                 {state.folios.map(f => {
                   const { failures, rc } = folioData(f)
-                  const effectiveDist = f.setDist || f.result?.best_distribution
+                  const effectiveDist = f.setDist
+                    || f.result?.best_distribution
+                    || (f.specialResult?.model === 'mixture' ? `Mixture (${f.specialResult.sub_curves?.length ?? 2} sub-pop)` : null)
+                    || (f.fitByGroup && f.groupResults ? `Grouped (${Object.keys(f.groupResults).length} IDs)` : null)
                   return (
                     <label key={f.id} className="flex items-start gap-2 text-xs text-gray-700 cursor-pointer">
                       <input type="checkbox"
@@ -2946,7 +2929,107 @@ export default function LifeData() {
               </div>
             )}
 
-            {folio.analysisMode === 'parametric' && fitResult && (
+            {folio.analysisMode === 'parametric' && isFitByGroup && folio.groupResults && (
+              <>
+                <div className="flex-1 overflow-hidden flex">
+                  <div className="w-80 flex-shrink-0 border-r border-gray-200 overflow-y-auto p-3">
+                    <p className="text-xs font-medium text-gray-500 mb-2">Fit by ID Group</p>
+                    <div className="flex flex-wrap gap-1 mb-3">
+                      {groupIds_all.map((gid, gi) => {
+                        const color = FOLIO_COLORS[gi % FOLIO_COLORS.length]
+                        return (
+                          <button key={gid} onClick={() => setActiveGroupTab(gid)}
+                            className={`flex items-center gap-1 px-2.5 py-1 text-xs rounded-t border transition-colors ${
+                              effectiveGroupTab === gid
+                                ? 'bg-white border-gray-300 border-b-white text-gray-900 font-semibold -mb-px z-10'
+                                : 'bg-gray-100 border-gray-200 text-gray-500 hover:text-gray-700'
+                            }`}>
+                            <span className="inline-block w-2 h-2 rounded-full flex-shrink-0"
+                              style={{ backgroundColor: color }} />
+                            {gid}
+                          </button>
+                        )
+                      })}
+                    </div>
+
+                    {effectiveGroupTab && activeGroupResult && (() => {
+                      const gRes = activeGroupResult
+                      const gDist = activeGroupDist
+                      const gi = groupIds_all.indexOf(effectiveGroupTab)
+                      const isSet = folio.groupSetDists?.[effectiveGroupTab] === gDist
+                      return (
+                        <>
+                          <p className="text-xs font-medium text-gray-500 mb-2">
+                            Fit Results — <span className="text-green-700 font-semibold">{gRes.best_distribution}</span>
+                          </p>
+                          <ResultsTable
+                            columns={tableColumns}
+                            rows={gRes.results as unknown as Record<string, unknown>[]}
+                            rowKey="Distribution"
+                            selectedRow={gDist}
+                            onRowClick={row => patchActive(f => ({
+                              groupSelectedDists: { ...f.groupSelectedDists, [effectiveGroupTab]: row.Distribution as string },
+                            }))}
+                            sortable
+                          />
+                          {folio.groupSetDists?.[effectiveGroupTab] && (
+                            <p className="text-[10px] text-green-600 mt-1 flex items-center gap-1">
+                              <Check size={10} /> Set: {folio.groupSetDists[effectiveGroupTab]}
+                            </p>
+                          )}
+                          <button
+                            onClick={() => patchActive(f => ({
+                              groupSetDists: { ...f.groupSetDists, [effectiveGroupTab]: gDist },
+                            }))}
+                            disabled={isSet}
+                            className={`mt-2 w-full flex items-center justify-center gap-1.5 text-xs font-medium py-1.5 rounded border transition-colors ${
+                              isSet
+                                ? 'bg-green-50 text-green-700 border-green-300 cursor-default'
+                                : 'bg-white text-blue-600 border-blue-400 hover:bg-blue-50'
+                            }`}>
+                            {isSet ? <><Check size={12} /> Set as {gDist}</> : <>Set as {gDist}</>}
+                          </button>
+
+                          {selectedParams && selectedParams.rows.length > 0 && (
+                            <div className="mt-4">
+                              <p className="text-xs font-medium text-gray-500 mb-2">
+                                Parameters — <span className="font-semibold text-gray-700">{selectedParams.dist}</span>
+                                <span className="text-gray-400"> ({ciPct}% CI)</span>
+                              </p>
+                              <table className="w-full text-xs border-collapse">
+                                <thead>
+                                  <tr className="text-gray-500 border-b border-gray-200">
+                                    <th className="text-left py-1 font-medium">Param</th>
+                                    <th className="text-right py-1 font-medium">Value</th>
+                                    <th className="text-right py-1 font-medium">SE</th>
+                                    <th className="text-right py-1 font-medium">Lower</th>
+                                    <th className="text-right py-1 font-medium">Upper</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="font-mono">
+                                  {selectedParams.rows.map(r => (
+                                    <tr key={r.name} className="border-b border-gray-100">
+                                      <td className="py-1 text-gray-700">{r.name}</td>
+                                      <td className="py-1 text-right">{fmt(r.value)}</td>
+                                      <td className="py-1 text-right text-gray-500">{fmt(r.se)}</td>
+                                      <td className="py-1 text-right text-gray-500">{fmt(r.lower)}</td>
+                                      <td className="py-1 text-right text-gray-500">{fmt(r.upper)}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </>
+                      )
+                    })()}
+                  </div>
+                  {renderPlotPanel()}
+                </div>
+              </>
+            )}
+
+            {folio.analysisMode === 'parametric' && !isFitByGroup && fitResult && (
               <>
                 <div className="flex-1 overflow-hidden flex">
                   {/* Results table */}
@@ -2962,13 +3045,11 @@ export default function LifeData() {
                       onRowClick={row => patchActive({ selectedDist: row.Distribution as string })}
                       sortable
                     />
-                    {/* Set Distribution indicator per row */}
                     {folio.setDist && (
                       <p className="text-[10px] text-green-600 mt-1 flex items-center gap-1">
                         <Check size={10} /> Set: {folio.setDist}
                       </p>
                     )}
-                    {/* Set Distribution button */}
                     {activeDist && (
                       <button
                         onClick={() => patchActive({ setDist: activeDist })}
@@ -2985,62 +3066,6 @@ export default function LifeData() {
                           <>Set as {activeDist}</>
                         )}
                       </button>
-                    )}
-
-                    {/* Per-ID-group distribution selection (when fitting by group) */}
-                    {folio.groupResults && Object.keys(folio.groupResults).length > 0 && (
-                      <div className="mt-4 border-t border-gray-200 pt-3">
-                        <p className="text-xs font-medium text-gray-500 mb-2">
-                          Per-group distributions
-                        </p>
-                        <div className="flex flex-col gap-2">
-                          {Object.keys(folio.groupResults).map((gid, gi) => {
-                            const gRes = folio.groupResults![gid]
-                            const cur = groupDist(gid)
-                            const isSet = folio.groupSetDists?.[gid] === cur
-                            const color = FOLIO_COLORS[gi % FOLIO_COLORS.length]
-                            return (
-                              <div key={gid} className="border border-gray-200 rounded p-2 bg-gray-50">
-                                <div className="flex items-center gap-1.5 mb-1">
-                                  <span className="inline-block w-2.5 h-2.5 rounded-full flex-shrink-0"
-                                    style={{ backgroundColor: color }} />
-                                  <span className="text-xs font-semibold text-gray-700 truncate">{gid}</span>
-                                  <span className="text-[10px] text-gray-400 ml-auto">
-                                    best: {gRes.best_distribution}
-                                  </span>
-                                </div>
-                                <div className="flex items-center gap-1">
-                                  <select
-                                    value={cur}
-                                    onChange={e => patchActive(f => ({
-                                      groupSelectedDists: { ...f.groupSelectedDists, [gid]: e.target.value },
-                                    }))}
-                                    className="flex-1 text-[11px] border border-gray-300 rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-400"
-                                  >
-                                    {gRes.results.map(r => (
-                                      <option key={r.Distribution} value={r.Distribution}>{r.Distribution}</option>
-                                    ))}
-                                  </select>
-                                  <button
-                                    onClick={() => patchActive(f => ({
-                                      groupSetDists: { ...f.groupSetDists, [gid]: cur },
-                                    }))}
-                                    disabled={isSet}
-                                    title="Set this distribution as the group's chosen fit"
-                                    className={`px-2 py-0.5 text-[10px] rounded border transition-colors flex items-center gap-1 ${
-                                      isSet
-                                        ? 'bg-green-50 text-green-700 border-green-300 cursor-default'
-                                        : 'bg-white text-blue-600 border-blue-400 hover:bg-blue-50'
-                                    }`}
-                                  >
-                                    {isSet ? <><Check size={10} /> Set</> : 'Set'}
-                                  </button>
-                                </div>
-                              </div>
-                            )
-                          })}
-                        </div>
-                      </div>
                     )}
 
                     {selectedParams && selectedParams.rows.length > 0 && (
@@ -3278,8 +3303,6 @@ export default function LifeData() {
                           yaxis: { title: { text: 'SF' }, gridcolor: '#e5e7eb' },
                           margin: { t: 40, r: 20, b: 50, l: 60 },
                           paper_bgcolor: 'white', plot_bgcolor: 'white',
-                          showlegend: !!specialResult.sub_curves,
-                          legend: { x: 0.02, y: 0.98, font: { size: 10 } },
                         } as PlotlyLayout}
                         config={{ responsive: true }}
                         style={{ width: '100%', height: '100%' }}
@@ -3297,8 +3320,6 @@ export default function LifeData() {
                           yaxis: { title: { text: 'CDF' }, gridcolor: '#e5e7eb' },
                           margin: { t: 40, r: 20, b: 50, l: 60 },
                           paper_bgcolor: 'white', plot_bgcolor: 'white',
-                          showlegend: !!specialResult.sub_curves,
-                          legend: { x: 0.02, y: 0.98, font: { size: 10 } },
                         } as PlotlyLayout}
                         config={{ responsive: true }}
                         style={{ width: '100%', height: '100%' }}
@@ -3316,8 +3337,6 @@ export default function LifeData() {
                           yaxis: { title: { text: 'PDF' }, gridcolor: '#e5e7eb' },
                           margin: { t: 40, r: 20, b: 50, l: 60 },
                           paper_bgcolor: 'white', plot_bgcolor: 'white',
-                          showlegend: !!specialResult.sub_curves,
-                          legend: { x: 0.02, y: 0.98, font: { size: 10 } },
                         } as PlotlyLayout}
                         config={{ responsive: true }}
                         style={{ width: '100%', height: '100%' }}

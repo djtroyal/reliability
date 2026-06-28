@@ -1,18 +1,15 @@
+import { useState, useEffect, useRef, lazy, Suspense } from 'react'
+// Nav uses static lucide-react icons for instant first paint. Tabs with an exact
+// animated equivalent additionally swap to a lucide-animated icon once that chunk
+// loads (lazy AnimatedNavIcon below) — keeping lucide-animated + motion (~100 KB
+// gzip) out of the initial bundle. Tabs without an animated equivalent stay static.
 import {
-  useState, useEffect, useRef, lazy, Suspense,
-  type ComponentType, type ForwardRefExoticComponent, type RefAttributes,
-} from 'react'
-// Icons with an exact lucide-animated equivalent animate on hover (and revert to
-// static on mouse-out). Icons without one stay as static lucide-react icons so
-// the glyph is unchanged. (LineChart→ChartLine and ScatterChart→ChartScatter are
-// lucide aliases — same glyphs, just the animated names.)
-import {
-  Network, FlaskConical, Target, FolderKanban, FileText, Loader2,
+  LineChart, Thermometer, Network, Cpu, Atom, TrendingUp, ShieldCheck,
+  FlaskConical, ScatterChart, Target, FolderKanban, FileText, Gauge, GitFork,
+  Loader2,
 } from 'lucide-react'
-import {
-  ChartLineIcon, ThermometerIcon, CpuIcon, AtomIcon, TrendingUpIcon,
-  ShieldCheckIcon, ChartScatterIcon, GaugeIcon, GitForkIcon,
-} from 'lucide-animated'
+import type { AnimatedIconHandle, AnimatedIconName } from './components/shared/AnimatedNavIcon'
+const AnimatedNavIcon = lazy(() => import('./components/shared/AnimatedNavIcon'))
 // Modules are code-split (React.lazy) so each loads on first visit instead of
 // inflating the initial bundle. Heavy vendors are chunked in vite.config.ts.
 const LifeData = lazy(() => import('./components/LifeData'))
@@ -40,44 +37,41 @@ type Tab =
   | 'life-data' | 'alt' | 'system-modeling' | 'prediction' | 'pof' | 'growth' | 'warranty'
   | 'ram' | 'allocation' | 'hypothesis' | 'data-analysis' | 'six-sigma' | 'report-builder'
 
-// Either a static lucide-react icon or an animated lucide-animated icon; both
-// accept `size` + `className`.
-type IconComp = ComponentType<{ size?: number; className?: string }> | typeof Network
-const tabs: { id: Tab; label: string; moduleKey: string; icon: IconComp; color: string }[] = [
-  { id: 'life-data', label: 'Life Data Analysis', moduleKey: 'lifeData', icon: ChartLineIcon, color: 'text-blue-500' },
-  { id: 'alt', label: 'Reliability Testing', moduleKey: 'alt', icon: ThermometerIcon, color: 'text-amber-500' },
+// `icon` is the static lucide-react glyph (instant paint / fallback); `anim` is
+// the matching lucide-animated name (lazy-loaded) when one exists.
+const tabs: {
+  id: Tab; label: string; moduleKey: string
+  icon: typeof Network; anim?: AnimatedIconName; color: string
+}[] = [
+  { id: 'life-data', label: 'Life Data Analysis', moduleKey: 'lifeData', icon: LineChart, anim: 'ChartLine', color: 'text-blue-500' },
+  { id: 'alt', label: 'Reliability Testing', moduleKey: 'alt', icon: Thermometer, anim: 'Thermometer', color: 'text-amber-500' },
   { id: 'system-modeling', label: 'System Modeling', moduleKey: 'systemModeling', icon: Network, color: 'text-emerald-500' },
-  { id: 'allocation', label: 'Reliability Allocation', moduleKey: 'reliabilityAllocation', icon: GitForkIcon, color: 'text-lime-600' },
-  { id: 'prediction', label: 'Failure Rate Prediction', moduleKey: 'prediction', icon: CpuIcon, color: 'text-indigo-500' },
-  { id: 'pof', label: 'Physics of Failure', moduleKey: 'pof', icon: AtomIcon, color: 'text-violet-500' },
-  { id: 'growth', label: 'Reliability Growth', moduleKey: 'growth', icon: TrendingUpIcon, color: 'text-green-500' },
-  { id: 'ram', label: 'Availability & Spares', moduleKey: 'ram', icon: GaugeIcon, color: 'text-sky-500' },
-  { id: 'warranty', label: 'Warranty Analysis', moduleKey: 'warranty', icon: ShieldCheckIcon, color: 'text-cyan-500' },
+  { id: 'allocation', label: 'Reliability Allocation', moduleKey: 'reliabilityAllocation', icon: GitFork, anim: 'GitFork', color: 'text-lime-600' },
+  { id: 'prediction', label: 'Failure Rate Prediction', moduleKey: 'prediction', icon: Cpu, anim: 'Cpu', color: 'text-indigo-500' },
+  { id: 'pof', label: 'Physics of Failure', moduleKey: 'pof', icon: Atom, anim: 'Atom', color: 'text-violet-500' },
+  { id: 'growth', label: 'Reliability Growth', moduleKey: 'growth', icon: TrendingUp, anim: 'TrendingUp', color: 'text-green-500' },
+  { id: 'ram', label: 'Availability & Spares', moduleKey: 'ram', icon: Gauge, anim: 'Gauge', color: 'text-sky-500' },
+  { id: 'warranty', label: 'Warranty Analysis', moduleKey: 'warranty', icon: ShieldCheck, anim: 'ShieldCheck', color: 'text-cyan-500' },
   { id: 'hypothesis', label: 'Hypothesis Tests', moduleKey: 'hypothesis', icon: FlaskConical, color: 'text-fuchsia-500' },
-  { id: 'data-analysis', label: 'Statistical Modeling', moduleKey: 'dataAnalysis', icon: ChartScatterIcon, color: 'text-orange-500' },
+  { id: 'data-analysis', label: 'Statistical Modeling', moduleKey: 'dataAnalysis', icon: ScatterChart, anim: 'ChartScatter', color: 'text-orange-500' },
   { id: 'six-sigma', label: 'Six Sigma', moduleKey: 'sixSigma', icon: Target, color: 'text-teal-500' },
   { id: 'report-builder', label: 'Report Builder', moduleKey: 'reportBuilder', icon: FileText, color: 'text-rose-500' },
 ]
 
 type TabDef = typeof tabs[number]
 
-/** Handle exposed by lucide-animated icons (no-op for static lucide-react). */
-interface AnimatedIconHandle { startAnimation?: () => void; stopAnimation?: () => void }
-
 /**
- * A navigation tab. The icon animates when the *whole tab* is hovered or when
- * the tab is selected — driven via the icon's ref (attaching a ref puts
- * lucide-animated icons into controlled mode; static lucide-react icons simply
- * ignore the start/stop calls).
+ * A navigation tab. When the tab has an animated icon, it swaps in the lazy
+ * lucide-animated version (static icon shown until that chunk loads) and animates
+ * when the whole tab is hovered or selected — driven via the icon's ref.
  */
 function NavTab({ tab, active, onClick }: { tab: TabDef; active: boolean; onClick: () => void }) {
   const iconRef = useRef<AnimatedIconHandle | null>(null)
   const play = () => iconRef.current?.startAnimation?.()
-  // Animate when this tab becomes the selected one.
+  // Animate when this tab becomes the selected one (no-op until the chunk loads).
   useEffect(() => { if (active) play() }, [active])
-  const Icon = tab.icon as ForwardRefExoticComponent<
-    { size?: number; className?: string } & RefAttributes<AnimatedIconHandle>
-  >
+  const StaticIcon = tab.icon
+  const staticIcon = <StaticIcon size={13} className={`flex-shrink-0 ${tab.color}`} />
   return (
     <button
       onClick={onClick}
@@ -89,7 +83,11 @@ function NavTab({ tab, active, onClick }: { tab: TabDef; active: boolean; onClic
           : 'border-transparent text-gray-500 hover:text-gray-800 hover:border-gray-300'
       }`}
     >
-      <Icon ref={iconRef} size={13} className={`flex-shrink-0 ${tab.color}`} />
+      {tab.anim
+        ? <Suspense fallback={staticIcon}>
+            <AnimatedNavIcon ref={iconRef} name={tab.anim} size={13} className={`flex-shrink-0 ${tab.color}`} />
+          </Suspense>
+        : staticIcon}
       {tab.label}
     </button>
   )

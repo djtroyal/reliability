@@ -7,6 +7,9 @@ import {
   getProjectState, convertProjectUnits,
 } from '../../store/project'
 import { sameGroup } from '../../store/units'
+import { toast } from './toast'
+import { confirmDialog, promptDialog, useFocusTrap } from './useDialog'
+import { saveProjectFlow } from './projectActions'
 
 /** A queued action that will replace the current project once the user
  *  confirms how to handle unsaved work. */
@@ -28,59 +31,64 @@ export default function ProjectBar({ activeModule }: Props) {
   const [projectName] = useProjectName()
   const [units, setUnits] = useUnits()
   const [menu, setMenu] = useState<'export' | 'import' | 'open' | null>(null)
-  const [notice, setNotice] = useState<string | null>(null)
   const [saved, setSaved] = useState<{ name: string; savedAt: string }[]>([])
   const [pending, setPending] = useState<PendingOverwrite | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const importScope = useRef<'module' | 'all'>('all')
   const wrapRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!notice) return
-    const t = setTimeout(() => setNotice(null), 4000)
-    return () => clearTimeout(t)
-  }, [notice])
+  const pendingRef = useRef<HTMLDivElement>(null)
+  useFocusTrap(pendingRef, pending != null, () => setPending(null))
 
   useEffect(() => {
     const close = (e: MouseEvent) => {
       if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setMenu(null)
     }
+    // Escape closes any open dropdown menu.
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenu(null) }
     document.addEventListener('mousedown', close)
-    return () => document.removeEventListener('mousedown', close)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', close)
+      document.removeEventListener('keydown', onKey)
+    }
   }, [])
 
   const moduleLabel = MODULE_LABELS[activeModule] ?? activeModule
   const sanitize = (s: string) => (s || 'project').replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '') || 'project'
   const exportBase = sanitize(projectName)
 
-  const handleNew = () => {
-    if (window.confirm('Start a new project? Unsaved data in all modules will be cleared.')) {
+  const handleNew = async () => {
+    if (await confirmDialog({
+      title: 'Start a new project?',
+      body: 'Unsaved data in all modules will be cleared.',
+      confirmLabel: 'New project',
+      tone: 'danger',
+    })) {
       newProject()
+      toast.info('Started a new project.')
     }
   }
 
   /** Switch units. For compatible units (e.g. hours↔days) offer to rescale the
    *  existing time-valued inputs; otherwise just relabel. */
-  const handleUnitsChange = (next: string) => {
+  const handleUnitsChange = async (next: string) => {
     if (next === units) return
     const hasData = Object.keys(getProjectState().modules).length > 0
     if (sameGroup(units, next) && hasData &&
-        window.confirm(`Convert existing values from ${units} to ${next}?\n\n`
-          + `Time-valued inputs (failure times, MTBF, mission time, rates, …) will be `
-          + `rescaled and computed results cleared for re-running. Choose Cancel to only `
-          + `change the label.`)) {
+        await confirmDialog({
+          title: `Convert existing values from ${units} to ${next}?`,
+          body: 'Time-valued inputs (failure times, MTBF, mission time, rates, …) will be '
+            + 'rescaled and computed results cleared for re-running. Choose Cancel to only '
+            + 'change the label.',
+          confirmLabel: 'Convert values',
+        })) {
       convertProjectUnits(units, next)
+      toast.success(`Converted values to ${next}.`)
     }
     setUnits(next)
   }
 
-  const handleSave = () => {
-    const name = window.prompt('Save project as:', projectName || 'Untitled Project')
-    if (name && name.trim()) {
-      saveNamedProject(name.trim())
-      setNotice(`Saved "${name.trim()}" to this browser.`)
-    }
-  }
+  const handleSave = saveProjectFlow
 
   const openMenu = () => {
     setSaved(listSavedProjects())
@@ -91,7 +99,7 @@ export default function ProjectBar({ activeModule }: Props) {
   const projectHasContent = () => Object.keys(getProjectState().modules).length > 0
 
   const doOpen = (name: string) => {
-    if (openNamedProject(name)) setNotice(`Opened "${name}".`)
+    if (openNamedProject(name)) toast.success(`Opened "${name}".`)
   }
 
   const handleOpen = (name: string) => {
@@ -100,11 +108,17 @@ export default function ProjectBar({ activeModule }: Props) {
     else doOpen(name)
   }
 
-  const handleDelete = (e: React.MouseEvent, name: string) => {
+  const handleDelete = async (e: React.MouseEvent, name: string) => {
     e.stopPropagation()
-    if (window.confirm(`Delete saved project "${name}"? This cannot be undone.`)) {
+    if (await confirmDialog({
+      title: `Delete saved project "${name}"?`,
+      body: 'This cannot be undone.',
+      confirmLabel: 'Delete',
+      tone: 'danger',
+    })) {
       deleteNamedProject(name)
       setSaved(listSavedProjects())
+      toast.info(`Deleted "${name}".`)
     }
   }
 
@@ -118,9 +132,13 @@ export default function ProjectBar({ activeModule }: Props) {
     try {
       const payload = await readJSONFile(file)
       const { applied } = importPayload(payload, scope === 'module' ? activeModule : undefined)
-      setNotice(`Imported: ${applied.map(k => MODULE_LABELS[k] ?? k).join(', ')}`)
+      if (applied.length === 0) {
+        toast.info('Nothing to import — the file had no matching module data.')
+      } else {
+        toast.success(`Imported: ${applied.map(k => MODULE_LABELS[k] ?? k).join(', ')}`)
+      }
     } catch (e) {
-      setNotice(`Import failed: ${(e as Error).message}`)
+      toast.error(`Import failed: ${(e as Error).message}`)
     }
   }
 
@@ -143,10 +161,16 @@ export default function ProjectBar({ activeModule }: Props) {
     else await doImport(p.file, 'all')
   }
 
-  const saveThenContinue = () => {
-    const name = window.prompt('Save current project as:', projectName || 'Untitled Project')
+  const saveThenContinue = async () => {
+    const name = await promptDialog({
+      title: 'Save current project',
+      label: 'Save current project as:',
+      defaultValue: projectName || 'Untitled Project',
+      confirmLabel: 'Save',
+    })
     if (!name || !name.trim()) return // cancel the whole flow; nothing lost
     saveNamedProject(name.trim())
+    toast.success(`Saved "${name.trim()}".`)
     runPending()
   }
 
@@ -156,11 +180,6 @@ export default function ProjectBar({ activeModule }: Props) {
 
   return (
     <div ref={wrapRef} className="ml-auto flex items-center gap-2 relative">
-      {notice && (
-        <span className="text-[11px] text-gray-500 bg-gray-100 px-2 py-1 rounded max-w-72 truncate">
-          {notice}
-        </span>
-      )}
       <select
         value={units}
         onChange={e => handleUnitsChange(e.target.value)}
@@ -170,7 +189,7 @@ export default function ProjectBar({ activeModule }: Props) {
         {UNIT_OPTIONS.map(u => <option key={u} value={u}>{u}</option>)}
       </select>
 
-      <button onClick={handleSave} title="Save project to this browser"
+      <button onClick={handleSave} title="Save project to this browser" aria-label="Save project to this browser"
         className="flex items-center gap-1 text-xs text-gray-600 hover:text-blue-600 border border-gray-200 px-2 py-1.5 rounded">
         <Save size={13} /> Save
       </button>
@@ -178,6 +197,7 @@ export default function ProjectBar({ activeModule }: Props) {
       {/* Open (from browser storage) */}
       <div className="relative">
         <button onClick={openMenu} title="Open a saved project from this browser"
+          aria-label="Open a saved project" aria-haspopup="menu" aria-expanded={menu === 'open'}
           className="flex items-center gap-1 text-xs text-gray-600 hover:text-blue-600 border border-gray-200 px-2 py-1.5 rounded">
           <FolderOpen size={13} /> Open <ChevronDown size={11} />
         </button>
@@ -195,7 +215,7 @@ export default function ProjectBar({ activeModule }: Props) {
                     <span className="text-[10px] text-gray-400">{new Date(p.savedAt).toLocaleString()}</span>
                   </span>
                   <button onClick={e => handleDelete(e, p.name)}
-                    title="Delete saved project"
+                    title="Delete saved project" aria-label={`Delete saved project ${p.name}`}
                     className="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
                     <Trash2 size={13} />
                   </button>
@@ -206,7 +226,7 @@ export default function ProjectBar({ activeModule }: Props) {
         )}
       </div>
 
-      <button onClick={handleNew} title="New project"
+      <button onClick={handleNew} title="New project" aria-label="Start a new project"
         className="flex items-center gap-1 text-xs text-gray-600 hover:text-blue-600 border border-gray-200 px-2 py-1.5 rounded">
         <FolderPlus size={13} /> New
       </button>
@@ -214,6 +234,8 @@ export default function ProjectBar({ activeModule }: Props) {
       {/* Import */}
       <div className="relative">
         <button onClick={() => setMenu(menu === 'import' ? null : 'import')}
+          title="Import data from a file" aria-label="Import data from a file"
+          aria-haspopup="menu" aria-expanded={menu === 'import'}
           className="flex items-center gap-1 text-xs text-gray-600 hover:text-blue-600 border border-gray-200 px-2 py-1.5 rounded">
           <Upload size={13} /> Import <ChevronDown size={11} />
         </button>
@@ -234,6 +256,8 @@ export default function ProjectBar({ activeModule }: Props) {
       {/* Export */}
       <div className="relative">
         <button onClick={() => setMenu(menu === 'export' ? null : 'export')}
+          title="Export data to a file" aria-label="Export data to a file"
+          aria-haspopup="menu" aria-expanded={menu === 'export'}
           className="flex items-center gap-1 text-xs text-gray-600 hover:text-blue-600 border border-gray-200 px-2 py-1.5 rounded">
           <Download size={13} /> Export <ChevronDown size={11} />
         </button>
@@ -265,7 +289,8 @@ export default function ProjectBar({ activeModule }: Props) {
       {pending && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/30"
           onClick={() => setPending(null)}>
-          <div className="bg-white rounded-lg shadow-xl border border-gray-200 p-5 w-[26rem] max-w-[90vw]"
+          <div ref={pendingRef} role="dialog" aria-modal="true" aria-label="Replace current project?"
+            className="bg-white rounded-lg shadow-xl border border-gray-200 p-5 w-[26rem] max-w-[90vw]"
             onClick={e => e.stopPropagation()}>
             <div className="flex items-start gap-3">
               <AlertTriangle size={20} className="text-amber-500 flex-shrink-0 mt-0.5" />
